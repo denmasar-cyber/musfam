@@ -70,8 +70,6 @@ const VERSE_THEME_MAP: Record<string, MissionEntry> = {
 
   // ── Additional verse mappings ──────────────────────────────────────────────
   '3:103':  { mission: 'Strengthen a family bond: have a real, unhurried conversation with one family member today', reflectionPrompt: 'What did you learn or appreciate about the person you spoke with?' },
-  '4:36':   { mission: 'Say something genuinely kind to 3 different people today: compliment, encourage, or express gratitude', reflectionPrompt: 'What did you say to each person, and how did they respond?' },
-  '9:128':  { mission: 'Show mercy to someone who is struggling: be extra gentle, patient, or forgiving with them today', reflectionPrompt: 'Who did you show mercy to and what changed between you?' },
   '14:7':   { mission: 'Write down or say aloud 5 specific things you are grateful to Allah for today: go beyond the obvious', reflectionPrompt: 'Which of the 5 blessings surprised you most when you stopped to think about it?' },
   '16:90':  { mission: 'Stand up for what is right: if you see an unfair situation today, respond with justice rather than silence', reflectionPrompt: 'What did you observe, and how did you respond or try to respond?' },
   '17:23':  { mission: 'Honor your parents: do something kind for them today without being asked, and without mentioning it', reflectionPrompt: 'What did you do and what was their reaction? How did it make you feel?' },
@@ -80,10 +78,8 @@ const VERSE_THEME_MAP: Record<string, MissionEntry> = {
   '23:1':   { mission: 'Pray at least one salah with full khushu: put your phone away, recite slowly, and reflect on each word', reflectionPrompt: 'Which verse or moment during that prayer stood out to you most?' },
   '24:30':  { mission: 'Guard your gaze and your speech today: no backbiting, gossip, or harmful content for 24 hours', reflectionPrompt: 'What temptations came up and how did you handle them?' },
   '25:63':  { mission: 'If someone is rude or provocative today, respond calmly with peace instead of reacting in kind', reflectionPrompt: 'Did a moment arise? How did choosing a peaceful response feel compared to reacting?' },
-  '27:19':  { mission: 'Begin every task today with Bismillah and end it with Alhamdulillah: make it a conscious habit all day', reflectionPrompt: 'How did this simple practice change your awareness or approach to the tasks you did?' },
   '31:14':  { mission: 'Call or visit a grandparent, aunt, uncle, or extended family member you have not spoken to recently', reflectionPrompt: 'How did that connection feel? What did you talk about and what will you take away from it?' },
   '33:70':  { mission: 'Speak only truth today: correct yourself if you exaggerate, mislead, or say something you are not certain of', reflectionPrompt: 'Was there a moment where you caught yourself? What did you do and how did honesty feel?' },
-  '49:10':  { mission: 'Reconcile with someone you have had a disagreement with, or reach out to a friend you have lost touch with', reflectionPrompt: 'What step did you take toward reconciliation or reconnection? How did it go?' },
   '49:13':  { mission: 'Learn something meaningful today about a background, culture, or perspective different from your own', reflectionPrompt: 'What did you learn and how did it shift or deepen your understanding?' },
   '55:13':  { mission: 'Count 10 blessings from Allah today: push yourself past the obvious ones to find hidden gifts', reflectionPrompt: 'Which blessing had you been overlooking or taking for granted?' },
   '93:11':  { mission: 'Give something today: money, time, food, a kind deed, or a listening ear, to someone in need', reflectionPrompt: 'Who did you give to, what did you give, and how did the act of giving feel?' },

@@ -736,63 +736,46 @@ export default function LearnPage() {
     <>
       <main className="flex-1 overflow-y-auto hide-scrollbar px-4 py-4 space-y-5 pb-24 page-enter">
 
-        {/* ── Level card ── */}
-        <div className="rounded-[30px] px-5 pt-6 pb-5 relative overflow-hidden shadow-[0_18px_40px_rgba(45,58,16,0.22)] batik-overlay hero-glow"
+        {/* ── Level compact card ── */}
+        <div className="rounded-2xl overflow-hidden shadow-sm border border-black/[0.06]"
           style={{ background: `linear-gradient(135deg, ${levelColor} 0%, #1a5c2e 100%)` }}>
-          <div className="text-center">
-            <p className="text-white/60 text-[10px] font-bold uppercase tracking-[0.28em]">Learn Path</p>
-            <p className="text-white font-extrabold text-[2rem] mt-2 flex items-center justify-center gap-2">
-              {levelName}
-              {levelName === 'Ulil Albab' && <Sparkles size={18} className="text-yellow-300" />}
-            </p>
-            <p className="text-[#dce7b7] text-sm mt-2">Grow Quran knowledge step by step with your family</p>
-          </div>
-
-          <div className="flex items-center justify-center gap-2 mt-5 flex-wrap">
-            <span className="hero-chip">{completedCategories.size}/{CATEGORIES.length} Modules</span>
-            <span className="hero-chip">{totalAnswered} Questions</span>
-            <span className="hero-chip">Lv. {level}</span>
-          </div>
-
-          <div className="mt-5 rounded-[24px] border border-white/12 bg-black/10 backdrop-blur-[2px] px-4 py-4">
-            <div className="flex items-start justify-between gap-4 mb-3">
-              <div className="text-left">
-                <p className="text-white/60 text-[10px] font-bold uppercase tracking-widest">Your Level</p>
-                <p className="text-white font-extrabold text-2xl mt-0.5 flex items-center gap-2">
-                  {levelName}
-                  {levelName === 'Ulil Albab' && <Sparkles size={18} className="text-yellow-300" />}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-white/60 text-[9px] font-bold uppercase tracking-wider">Family Aura</p>
-                <p className="text-yellow-300 font-extrabold text-xl tabular-nums">{familyPoints.toLocaleString()} AP</p>
-              </div>
+          <div className="px-4 py-3 flex items-center justify-between">
+            <div>
+              <p className="text-white/60 text-[10px] font-bold uppercase tracking-widest">Learn Path</p>
+              <p className="text-white font-extrabold text-xl mt-0.5 flex items-center gap-1.5">
+                {levelName}
+                {levelName === 'Ulil Albab' && <Sparkles size={15} className="text-yellow-300" />}
+              </p>
             </div>
-
-            <div className="mb-3">
-              <div className="flex items-center justify-between mb-1.5">
-                <p className="text-white/60 text-[10px] font-bold">{totalEarned} AP from Learn</p>
-                <p className="text-white/60 text-[10px] font-bold">Next: {nextPts} AP</p>
-              </div>
-              <div className="w-full h-2.5 bg-white/20 rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-700 bg-yellow-300"
-                  style={{ width: `${xpProgress}%` }} />
-              </div>
+            <div className="text-right">
+              <p className="text-white/60 text-[9px] font-bold uppercase tracking-wider">Family Aura</p>
+              <p className="text-yellow-300 font-extrabold text-lg tabular-nums">{familyPoints.toLocaleString()} AP</p>
             </div>
-
-            <div className="grid grid-cols-3 gap-3">
-              <div className="text-center rounded-2xl bg-white/10 px-3 py-2.5 border border-white/10">
-                <p className="text-white font-extrabold text-lg">{totalAnswered}</p>
-                <p className="text-white/60 text-[9px] font-bold uppercase">Questions</p>
-              </div>
-              <div className="text-center rounded-2xl bg-white/10 px-3 py-2.5 border border-white/10">
-                <p className="text-white font-extrabold text-lg">{completedCategories.size}/{CATEGORIES.length}</p>
-                <p className="text-white/60 text-[9px] font-bold uppercase">Modules</p>
-              </div>
-              <div className="text-center rounded-2xl bg-white/10 px-3 py-2.5 border border-white/10">
-                <p className="text-white font-extrabold text-lg">Lv.{level}</p>
-                <p className="text-white/60 text-[9px] font-bold uppercase">Level</p>
-              </div>
+          </div>
+          {/* XP progress bar */}
+          <div className="px-4 pb-3">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-white/50 text-[9px] font-bold">{totalEarned} AP from Learn</p>
+              <p className="text-white/50 text-[9px] font-bold">Next: {nextPts} AP</p>
+            </div>
+            <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden">
+              <div className="h-full rounded-full bg-yellow-300 transition-all duration-700"
+                style={{ width: `${xpProgress}%` }} />
+            </div>
+          </div>
+          {/* Stats row */}
+          <div className="flex divide-x divide-white/10 border-t border-white/10">
+            <div className="flex-1 text-center px-3 py-2.5">
+              <p className="text-white font-extrabold text-base">{totalAnswered}</p>
+              <p className="text-white/50 text-[8px] font-bold uppercase">Questions</p>
+            </div>
+            <div className="flex-1 text-center px-3 py-2.5">
+              <p className="text-white font-extrabold text-base">{completedCategories.size}/{CATEGORIES.length}</p>
+              <p className="text-white/50 text-[8px] font-bold uppercase">Modules</p>
+            </div>
+            <div className="flex-1 text-center px-3 py-2.5">
+              <p className="text-white font-extrabold text-base">Lv.{level}</p>
+              <p className="text-white/50 text-[8px] font-bold uppercase">Level</p>
             </div>
           </div>
         </div>

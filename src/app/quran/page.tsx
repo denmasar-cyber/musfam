@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { recordQuranRead } from '@/lib/store';
-import RiverLoading from '@/components/RiverLoading';
+import LoadingBlock from '@/components/LoadingBlock';
 import {
   BookOpen, Search, Bookmark, BookmarkCheck, StickyNote,
   ChevronLeft, ChevronRight, Flame, X,
@@ -321,18 +321,7 @@ function getWalisongoQuote() {
 }
 
 function QuranLoadingBlock() {
-  const wq = getWalisongoQuote();
-  return (
-    <div className="flex flex-col items-center justify-center py-10 gap-3 w-full">
-      <div className="w-full max-w-[280px] mx-auto">
-        <RiverLoading size="md" />
-      </div>
-      <div className="text-center px-6 max-w-xs">
-        <p className="text-xs italic text-gray-500 leading-relaxed">&ldquo;{wq.quote}&rdquo;</p>
-        <p className="text-[10px] font-bold text-forest/50 mt-1 uppercase tracking-wider">— {wq.author}</p>
-      </div>
-    </div>
-  );
+  return <LoadingBlock />;
 }
 
 /* ─── Page ───────────────────────────────────────────────── */
@@ -1438,10 +1427,6 @@ export default function QuranPage() {
                   <button type="button" title={isPlaying ? 'Pause' : 'Play'} onClick={togglePlayPause}
                     className="w-9 h-9 rounded-full bg-white flex items-center justify-center text-forest">
                     {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-                  </button>
-                  <button type="button" title="Next verse" onClick={() => skipToVerse(1)}
-                    className="w-8 h-8 rounded-full bg-white/15 flex items-center justify-center text-white">
-                    <SkipForward size={14} />
                   </button>
                   <button type="button" title="Close player" onClick={stopAudio}
                     className="w-8 h-8 rounded-full bg-white/15 flex items-center justify-center text-white">

@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { uploadProofImage } from '@/lib/store';
 import { Send, BookOpen, X, Loader2, Trash2, Users, Mic, MicOff, Video, CornerUpLeft, ChevronLeft } from 'lucide-react';
 import VideoCallModal from '@/components/VideoCallModal';
+import LoadingBlock from '@/components/LoadingBlock';
 import { useSwipeDown } from '@/hooks/useSwipeDown';
 import { useRouter } from 'next/navigation';
 
@@ -44,7 +45,7 @@ function verseKeyToLabel(key: string): string {
   const [surahStr, ayahStr] = key.split(':');
   const surahNum = parseInt(surahStr, 10);
   const name = SURAH_TRANSLITERATIONS[surahNum] || `Surah ${surahNum}`;
-  return `${name} : ${ayahStr}`;
+  return `${name} ${surahStr}:${ayahStr}`;
 }
 
 function AyahBubble({ content }: { content: string }) {
@@ -170,7 +171,7 @@ export default function ChatPage() {
 
   async function sendShareAyah() {
     if (!shareResult || !user || !family || !profile) return;
-    const text = `📖 ${verseKeyToLabel(shareResult.key)}\n${shareResult.arabic}\n\n"${shareResult.translation}"`;
+    const text = `${verseKeyToLabel(shareResult.key)}\n${shareResult.arabic}\n\n"${shareResult.translation}"`;
     await supabase.from('family_messages').insert({ family_id: family.id, user_id: user.id, sender_name: profile.name, sender_role: profile.role, content: text });
     setShowShareAyah(false); setShareInput(''); setShareResult(null);
   }
@@ -266,11 +267,7 @@ export default function ChatPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-[#E5DDD5]">
-        <div className="w-6 h-6 border-2 border-[#2d3a10]/30 border-t-[#2d3a10] rounded-full animate-spin" />
-      </div>
-    );
+    return <LoadingBlock fullScreen />;
   }
 
   return (
@@ -343,7 +340,7 @@ export default function ChatPage() {
               </div>
               {group.messages.map((msg) => {
                 const isMe = msg.user_id === user?.id;
-                const isAyah = msg.content.startsWith('📖');
+                const isAyah = /^[A-Z].*\d+:\d+\n/.test(msg.content) || msg.content.startsWith('📖');
                 const isVoice = msg.content.startsWith('[voice:');
                 const isReply = msg.content.startsWith('[reply:');
                 const voiceUrl = isVoice ? msg.content.slice(7, -1) : null;

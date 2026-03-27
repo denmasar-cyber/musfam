@@ -4,11 +4,10 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useSwipeDown } from '@/hooks/useSwipeDown';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, Users, Monitor, MonitorOff,
-  BookOpen, X, Smile, Bell, CheckSquare, Square, Plus, Trash2,
+  BookOpen, X, Smile, CheckSquare, Square, Plus, Trash2,
   Search, ChevronRight, ArrowLeft,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import RiverLoading from '@/components/RiverLoading';
 
 export interface IncomingCallInfo {
   callerName: string;
@@ -45,57 +44,7 @@ const RTC_CONFIG: RTCConfiguration = {
   ],
 };
 
-interface PrayerTime { name: string; time: string }
 
-function usePrayerTimes() {
-  const [prayers, setPrayers] = useState<PrayerTime[]>([]);
-  const [nextPrayer, setNextPrayer] = useState<PrayerTime | null>(null);
-  const [reminderMsg, setReminderMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const cached = sessionStorage.getItem('call_prayer_times');
-        let timings: Record<string, string>;
-        if (cached) {
-          timings = JSON.parse(cached);
-        } else {
-          const res = await fetch('https://api.aladhan.com/v1/timingsByCity?city=Jakarta&country=Indonesia&method=11');
-          const d = await res.json();
-          timings = d?.data?.timings || {};
-          sessionStorage.setItem('call_prayer_times', JSON.stringify(timings));
-        }
-        const keys = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
-        const list = keys.map(k => ({ name: k, time: timings[k] || '' })).filter(p => p.time);
-        setPrayers(list);
-        const now = new Date();
-        const nowMins = now.getHours() * 60 + now.getMinutes();
-        const next = list.find(p => {
-          const [h, m] = p.time.split(':').map(Number);
-          return h * 60 + m > nowMins;
-        });
-        setNextPrayer(next || list[0] || null);
-      } catch { /* silent */ }
-    }
-    load();
-  }, []);
-
-  useEffect(() => {
-    if (!nextPrayer) return;
-    const check = () => {
-      const now = new Date();
-      const nowMins = now.getHours() * 60 + now.getMinutes();
-      const [h, m] = nextPrayer.time.split(':').map(Number);
-      const diff = h * 60 + m - nowMins;
-      if (diff === 5) setReminderMsg(`${nextPrayer.name} in 5 minutes (${nextPrayer.time})`);
-      else if (diff === 0) setReminderMsg(`Time for ${nextPrayer.name} prayer!`);
-    };
-    const iv = setInterval(check, 60000);
-    return () => clearInterval(iv);
-  }, [nextPrayer]);
-
-  return { prayers, nextPrayer, reminderMsg, setReminderMsg };
-}
 
 // ── Quran search — mirrors quran/page.tsx search logic ──────────────────────
 interface QuranSearchResult {
@@ -199,7 +148,7 @@ export default function VideoCallModal({
   const [duration, setDuration] = useState(0);
   const [screenSharing, setScreenSharing] = useState(false);
 
-  type Panel = 'none' | 'quran' | 'prayers' | 'todos' | 'emoji';
+  type Panel = 'none' | 'quran' | 'todos' | 'emoji';
   const [activePanel, setActivePanel] = useState<Panel>('none');
   const swipePanel = useSwipeDown(() => setActivePanel('none'));
 
@@ -210,7 +159,6 @@ export default function VideoCallModal({
   const [todos, setTodos] = useState<CallTodo[]>([]);
   const [todoInput, setTodoInput] = useState('');
 
-  const { prayers, nextPrayer, reminderMsg, setReminderMsg } = usePrayerTimes();
   const quran = useQuranSearch();
 
   // Callback ref: fires every time the self-video element mounts/remounts.
@@ -524,17 +472,31 @@ export default function VideoCallModal({
   return (
     <div className="fixed inset-0 bg-[#1C1C1E] z-[300] flex flex-col select-none">
 
-      {/* ── Connecting overlay — shown on top while joining, video still mounts underneath ── */}
+      {/* ── Connecting overlay ── */}
       {connecting && (
-        <div className="absolute inset-0 bg-[#1C1C1E] z-50 flex flex-col items-center justify-center gap-4">
-          <RiverLoading size="md" />
-          <div className="text-center">
-            <p className="text-white text-lg font-semibold">{familyName}</p>
-            <p className="text-white/40 text-sm mt-1">Joining call...</p>
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-6"
+          style={{ background: 'linear-gradient(180deg, #0f1605 0%, #1a2508 60%, #0d1304 100%)' }}>
+          {/* Pulsing rings around avatar */}
+          <div className="relative flex items-center justify-center">
+            <div className="absolute w-32 h-32 rounded-full border-2 border-[#5a6b28]/30 animate-ping" style={{ animationDuration: '1.8s' }} />
+            <div className="absolute w-24 h-24 rounded-full border-2 border-[#5a6b28]/20 animate-ping" style={{ animationDuration: '2.2s', animationDelay: '0.4s' }} />
+            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#3d4e18] to-[#2d3a10] flex items-center justify-center text-2xl font-extrabold text-white shadow-2xl">
+              {displayName[0]?.toUpperCase()}
+            </div>
+          </div>
+          <div className="text-center space-y-1">
+            <p className="text-white text-xl font-bold">{familyName}</p>
+            <div className="flex items-center justify-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-[#5a6b28] animate-bounce" style={{ animationDelay: '0s' }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-[#5a6b28] animate-bounce" style={{ animationDelay: '0.15s' }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-[#5a6b28] animate-bounce" style={{ animationDelay: '0.30s' }} />
+            </div>
+            <p className="text-white/40 text-sm">Joining call...</p>
           </div>
           <button type="button" title="Cancel" onClick={handleEnd}
-            className="mt-6 w-14 h-14 rounded-full bg-red-500 flex items-center justify-center active:scale-95">
-            <PhoneOff size={22} className="text-white" />
+            className="w-16 h-16 rounded-full flex items-center justify-center active:scale-95 transition-transform shadow-2xl"
+            style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)' }}>
+            <PhoneOff size={24} className="text-white" />
           </button>
         </div>
       )}
@@ -556,13 +518,6 @@ export default function VideoCallModal({
         {/* Center: clock */}
         <span className="text-white/60 text-xs font-mono">{clock}</span>
 
-        {/* Right: next prayer */}
-        {nextPrayer && (
-          <div className="bg-white/8 rounded-lg px-2.5 py-1">
-            <p className="text-white/50 text-[10px] leading-tight">Next</p>
-            <p className="text-white text-[11px] font-bold leading-tight">{nextPrayer.name} {nextPrayer.time}</p>
-          </div>
-        )}
       </div>
 
       {/* ── Camera blocked banner ───────────────────────────────────────────── */}
@@ -594,15 +549,7 @@ export default function VideoCallModal({
         </div>
       )}
 
-      {/* ── Prayer reminder toast ───────────────────────────────────────────── */}
-      {reminderMsg && (
-        <div className="mx-3 mb-1 bg-amber-500 rounded-xl px-3 py-2 flex items-center justify-between">
-          <span className="text-white text-xs font-semibold">{reminderMsg}</span>
-          <button type="button" title="Dismiss" onClick={() => setReminderMsg(null)} className="text-white/70 ml-2">
-            <X size={14} />
-          </button>
-        </div>
-      )}
+
 
       {/* ── Video area ──────────────────────────────────────────────────────── */}
       <div className="flex-1 relative overflow-hidden">
@@ -762,7 +709,6 @@ export default function VideoCallModal({
             <div className="flex items-center justify-between px-5 py-2 border-b border-white/8 flex-shrink-0">
               <p className="text-white text-sm font-bold">
                 {activePanel === 'quran' && 'Quran'}
-                {activePanel === 'prayers' && 'Prayer Times'}
                 {activePanel === 'todos' && 'Discussion Points'}
                 {activePanel === 'emoji' && 'React'}
               </p>
@@ -897,29 +843,7 @@ export default function VideoCallModal({
               </div>
             )}
 
-            {/* ── Prayer times sheet ── */}
-            {activePanel === 'prayers' && (
-              <div className="overflow-y-auto p-4 space-y-2">
-                <p className="text-white/30 text-xs mb-2">Jakarta, Indonesia</p>
-                {prayers.length === 0 && <p className="text-white/30 text-xs text-center py-4">Loading...</p>}
-                {prayers.map(p => {
-                  const isNext = nextPrayer?.name === p.name;
-                  return (
-                    <div key={p.name}
-                      className={`flex items-center justify-between px-4 py-3 rounded-2xl ${isNext ? 'bg-[#5a6b28]/15 border border-[#5a6b28]/25' : 'bg-white/5'}`}>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xl">{p.name === 'Fajr' ? '🌅' : p.name === 'Dhuhr' ? '☀️' : p.name === 'Asr' ? '🌤️' : p.name === 'Maghrib' ? '🌆' : '🌙'}</span>
-                        <div>
-                          <p className={`text-sm font-semibold ${isNext ? 'text-white' : 'text-white/70'}`}>{p.name}</p>
-                          {isNext && <p className="text-[#5a6b28] text-[10px] font-bold">NEXT</p>}
-                        </div>
-                      </div>
-                      <span className={`font-mono text-sm font-bold ${isNext ? 'text-[#5a6b28]' : 'text-white/40'}`}>{p.time}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+
 
             {/* ── Todos sheet ── */}
             {activePanel === 'todos' && (
@@ -972,7 +896,7 @@ export default function VideoCallModal({
       <div className="bg-[#1C1C1E] border-t border-white/5 z-10 pb-8 pt-3 px-3">
         {/* Two rows: secondary tools above, core controls below */}
 
-        {/* Row 1 — secondary (Quran, Prayer, Agenda, React) */}
+        {/* Row 1 — secondary (Quran, Agenda, React, Screen) */}
         <div className="flex items-center justify-around mb-3 px-2">
           <div className="flex flex-col items-center gap-1">
             <button type="button" title="Quran" onClick={() => togglePanel('quran')}
@@ -980,13 +904,6 @@ export default function VideoCallModal({
               <BookOpen size={18} className="text-white" />
             </button>
             <span className="text-[9px] text-white/30">Quran</span>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            <button type="button" title="Prayer times" onClick={() => togglePanel('prayers')}
-              className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-colors ${activePanel === 'prayers' ? 'bg-amber-500' : 'bg-[#2C2C2E]'}`}>
-              <Bell size={18} className="text-white" />
-            </button>
-            <span className="text-[9px] text-white/30">Prayer</span>
           </div>
           <div className="flex flex-col items-center gap-1">
             <button type="button" title="Discussion agenda" onClick={() => togglePanel('todos')}

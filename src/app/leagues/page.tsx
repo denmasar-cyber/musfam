@@ -50,6 +50,19 @@ interface CompletionTarget {
 
 const DAILY_VERSES = ['2:255','1:1','2:286','3:173','2:152','3:200','39:53','94:5','94:6','2:45','13:28','65:3','2:177','17:80','18:10','33:41','2:153','3:139','4:103','29:45','73:20','76:9','59:22','2:261'];
 
+// Short surah name map for citation display
+const SURAH_NAMES: Record<number, string> = {
+  1:'Al-Fatihah',2:'Al-Baqarah',3:'Al-Imran',4:'An-Nisa',13:'Ar-Ra\'d',14:'Ibrahim',17:'Al-Isra',
+  18:'Al-Kahf',29:'Al-Ankabut',33:'Al-Ahzab',39:'Az-Zumar',45:'Al-Jathiyah',59:'Al-Hashr',
+  62:'Al-Jumuah',64:'At-Taghaabun',65:'At-Talaq',73:'Al-Muzzammil',76:'Al-Insan',94:'Al-Inshirah',96:'Al-Alaq',
+};
+
+function formatVerseRef(verseKey: string): string {
+  const [chapter, ayah] = verseKey.split(':');
+  const name = SURAH_NAMES[parseInt(chapter)] || `Surah ${chapter}`;
+  return `${name}: ${ayah}`;
+}
+
 function getDailyVerseKey() {
   const start = new Date(new Date().getFullYear(), 0, 0);
   const dayOfYear = Math.floor((+new Date() - +start) / 86400000);
@@ -213,8 +226,9 @@ export default function LeaguesPage() {
       );
       setRewards(visibleRewards);
       const approvedOrPending = todayCompletions
-        .filter(c => c.status === 'approved' || c.status === 'pending' || !c.status)
-        .map(c => c.mission_id).filter(Boolean) as string[];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .filter((c: any) => c.status === 'approved' || c.status === 'pending' || !c.status)
+        .map((c: any) => c.mission_id).filter(Boolean) as string[];
       setRejectedMissionIds(rejectedCompletions.map(c => c.mission_id).filter(Boolean) as string[]);
 
       const completedSet = new Set<string>(approvedOrPending);
@@ -463,7 +477,7 @@ export default function LeaguesPage() {
               <div className={`rounded-2xl border overflow-hidden ${missionCompleted ? 'border-forest/30' : 'border-cream-dark'}`}>
                 <div className="bg-gradient-to-r from-forest to-olive px-4 py-3 batik-overlay">
                   <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest mb-0.5">
-                    Daily · Quran {dailyMission.verse_key}
+                    Daily · {formatVerseRef(dailyMission.verse_key)}
                   </p>
                   <p className="text-white font-extrabold text-sm leading-snug">
                     {dailyMission.is_parent_override && dailyMission.parent_override_text

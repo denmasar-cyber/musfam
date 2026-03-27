@@ -37,11 +37,10 @@ body {
   position: absolute;
   inset: 0;
   background-image: url('/batik-gunungan.jpg');
-  background-repeat: no-repeat;
-  /* Fill width, crop height — motif stays proportional, no vertical stretching */
-  background-size: cover;
+  background-repeat: repeat;
+  background-size: 320px auto;
   background-position: center top;
-  opacity: 0.12;
+  opacity: 0.10;
   pointer-events: none;
   mix-blend-mode: soft-light;
   z-index: 0;
@@ -97,11 +96,10 @@ body {
   position: absolute;
   inset: 0;
   background-image: url('/batik-gunungan.jpg');
-  background-repeat: no-repeat;
-  /* Fill width, crop height from top — keeps the motif proportional regardless of element height */
-  background-size: cover;
+  background-repeat: repeat;
+  background-size: 320px auto;
   background-position: center top;
-  opacity: 0.15;
+  opacity: 0.12;
   pointer-events: none;
   mix-blend-mode: soft-light;
   z-index: 1;

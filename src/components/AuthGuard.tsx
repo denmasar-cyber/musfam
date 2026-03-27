@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import RiverLoading from '@/components/RiverLoading';
+import LoadingBlock from '@/components/LoadingBlock';
 
 const PUBLIC_ROUTES = ['/login', '/signup'];
 
@@ -30,11 +30,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   }, [user, profile, loading, pathname, isPublicRoute, isOnboarding, router]);
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-cream-light">
-        <RiverLoading size="md" />
-      </div>
-    );
+    return <LoadingBlock fullScreen />;
   }
 
   // Public route: render without nav

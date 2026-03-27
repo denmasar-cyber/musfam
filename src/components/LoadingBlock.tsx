@@ -8,45 +8,29 @@ interface QuranVerse {
   verseKey: string;
 }
 
-// Short, beautiful verses from Quran Foundation API
-const VERSE_KEYS = [
-  '94:5', '94:6', '65:3', '2:286', '3:173', '2:255',
-  '93:11', '55:13', '14:7', '39:53', '13:28', '2:152',
+// Short verses with known short translations
+const LOCAL_VERSES: QuranVerse[] = [
+  { arabic: 'فَإِنَّ مَعَ الْعُسْرِ يُسْرًا', translation: 'For indeed, with hardship will be ease.', verseKey: '94:5' },
+  { arabic: 'إِنَّ مَعَ الْعُسْرِ يُسْرًا', translation: 'Indeed, with hardship will be ease.', verseKey: '94:6' },
+  { arabic: 'وَمَن يَتَوَكَّلْ عَلَى اللَّهِ فَهُوَ حَسْبُهُ', translation: 'And whoever relies upon Allah — then He is sufficient for him.', verseKey: '65:3' },
+  { arabic: 'حَسْبُنَا اللَّهُ وَنِعْمَ الْوَكِيلُ', translation: 'Sufficient for us is Allah, and He is the best Disposer of affairs.', verseKey: '3:173' },
+  { arabic: 'فَبِأَيِّ آلَاءِ رَبِّكُمَا تُكَذِّبَانِ', translation: 'Then which of the favors of your Lord would you deny?', verseKey: '55:13' },
+  { arabic: 'أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ', translation: 'Verily, in the remembrance of Allah do hearts find rest.', verseKey: '13:28' },
+  { arabic: 'وَأَمَّا بِنِعْمَةِ رَبِّكَ فَحَدِّثْ', translation: 'And proclaim the favor of your Lord.', verseKey: '93:11' },
+  { arabic: 'فَاذْكُرُونِي أَذْكُرْكُمْ', translation: 'So remember Me; I will remember you.', verseKey: '2:152' },
 ];
 
-async function fetchVerseFromQuranFoundation(verseKey: string): Promise<QuranVerse | null> {
-  try {
-    const [chapter, verse] = verseKey.split(':');
-    const res = await fetch(
-      `https://api.quran.com/api/v4/verses/by_key/${verseKey}?translations=131&fields=text_uthmani,verse_key`,
-      { headers: { Accept: 'application/json' } }
-    );
-    if (!res.ok) throw new Error('API failed');
-    const data = await res.json();
-    const v = data?.verse;
-    if (!v) return null;
-    return {
-      arabic: v.text_uthmani || '',
-      translation: v.translations?.[0]?.text?.replace(/<[^>]+>/g, '') || '',
-      verseKey: v.verse_key || `${chapter}:${verse}`,
-    };
-  } catch {
-    return null;
-  }
-}
+const SURAH_NAMES: Record<number, string> = {
+  1:'Al-Fatihah',2:'Al-Baqarah',3:'Al-Imran',4:'An-Nisa',13:'Ar-Rad',14:'Ibrahim',
+  17:'Al-Isra',18:'Al-Kahf',29:'Al-Ankabut',33:'Al-Ahzab',39:'Az-Zumar',55:'Ar-Rahman',
+  59:'Al-Hashr',64:'At-Taghaabun',65:'At-Talaq',73:'Al-Muzzammil',76:'Al-Insan',
+  93:'Ad-Duha',94:'Al-Inshirah',96:'Al-Alaq',
+};
 
-function getLocalVerse(): QuranVerse {
-  const LOCAL_VERSES: QuranVerse[] = [
-    { arabic: 'فَإِنَّ مَعَ الْعُسْرِ يُسْرًا', translation: 'For indeed, with hardship will be ease.', verseKey: '94:5' },
-    { arabic: 'إِنَّ مَعَ الْعُسْرِ يُسْرًا', translation: 'Indeed, with hardship will be ease.', verseKey: '94:6' },
-    { arabic: 'وَمَن يَتَوَكَّلْ عَلَى اللَّهِ فَهُوَ حَسْبُهُ', translation: 'And whoever relies upon Allah — then He is sufficient for him.', verseKey: '65:3' },
-    { arabic: 'لَا يُكَلِّفُ اللَّهُ نَفْسًا إِلَّا وُسْعَهَا', translation: 'Allah does not burden a soul beyond that it can bear.', verseKey: '2:286' },
-    { arabic: 'حَسْبُنَا اللَّهُ وَنِعْمَ الْوَكِيلُ', translation: 'Sufficient for us is Allah, and He is the best Disposer of affairs.', verseKey: '3:173' },
-    { arabic: 'فَبِأَيِّ آلَاءِ رَبِّكُمَا تُكَذِّبَانِ', translation: 'Then which of the favors of your Lord would you deny?', verseKey: '55:13' },
-    { arabic: 'وَإِن تَعُدُّوا نِعْمَةَ اللَّهِ لَا تُحْصُوهَا', translation: 'And if you should count the favors of Allah, you could not enumerate them.', verseKey: '14:34' },
-    { arabic: 'أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ', translation: 'Verily, in the remembrance of Allah do hearts find rest.', verseKey: '13:28' },
-  ];
-  return LOCAL_VERSES[Math.floor(Date.now() / 7000) % LOCAL_VERSES.length];
+function formatCitation(verseKey: string) {
+  const [ch, ay] = verseKey.split(':');
+  const name = SURAH_NAMES[parseInt(ch)] || `Surah ${ch}`;
+  return `${name} ${ch}:${ay}`;
 }
 
 function TypingDots() {
@@ -74,52 +58,72 @@ interface LoadingBlockProps {
 }
 
 export default function LoadingBlock({ fullScreen = false }: LoadingBlockProps) {
+  // FIX: Initialize to null to avoid SSR/client hydration mismatch from Math.random()
+  // The random verse is selected only on the client inside useEffect
   const [verse, setVerse] = useState<QuranVerse | null>(null);
 
   useEffect(() => {
-    const cacheKey = `musfam_loading_verse_${new Date().toISOString().slice(0, 13)}`;
-    const cached = sessionStorage.getItem(cacheKey);
-    if (cached) {
-      try { setVerse(JSON.parse(cached)); return; } catch { /* ignore */ }
-    }
+    // Pick a random local verse immediately on client (avoids SSR mismatch)
+    const localVerse = LOCAL_VERSES[Math.floor(Math.random() * LOCAL_VERSES.length)];
+    setVerse(localVerse);
 
-    // Pick random verse key
-    const key = VERSE_KEYS[Math.floor(Math.random() * VERSE_KEYS.length)];
-    fetchVerseFromQuranFoundation(key).then(v => {
-      const result = v || getLocalVerse();
-      setVerse(result);
-      sessionStorage.setItem(cacheKey, JSON.stringify(result));
-    });
+    // Try to upgrade with a fresh API verse in background
+    const SHORT_VERSE_KEYS = ['94:5', '94:6', '65:3', '3:173', '55:13', '13:28', '93:11', '2:152'];
+    const key = SHORT_VERSE_KEYS[Math.floor(Math.random() * SHORT_VERSE_KEYS.length)];
+
+    const controller = new AbortController();
+    fetch(
+      `https://api.quran.com/api/v4/verses/by_key/${key}?translations=131&fields=text_uthmani,verse_key`,
+      { headers: { Accept: 'application/json' }, signal: controller.signal }
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const v = data?.verse;
+        if (!v) return;
+        const translation = (v.translations?.[0]?.text || '').replace(/<[^>]+>/g, '');
+        if (translation.length > 0 && translation.length <= 120) {
+          setVerse({ arabic: v.text_uthmani || '', translation, verseKey: v.verse_key || key });
+        }
+      })
+      .catch(() => { /* keep local verse */ });
+
+    return () => controller.abort();
   }, []);
 
   const content = (
     <div className="flex flex-col items-center gap-5 px-6 text-center max-w-xs mx-auto">
-      {/* Arabic crescent ornament */}
-      <div className="text-4xl" style={{ filter: 'drop-shadow(0 2px 8px rgba(200,168,75,0.4))' }}>
-        ☪️
-      </div>
-
-      {/* Verse content */}
       {verse ? (
-        <div className="space-y-3">
+        <>
+          {/* Arabic text */}
           <p
-            className="text-[22px] leading-[2.2] text-[#2d3a10] text-right"
+            className="text-[24px] leading-[2.2] text-[#2d3a10] text-right w-full"
             style={{ fontFamily: "'Amiri Quran', 'Amiri', serif" }}
+            dir="rtl"
           >
             {verse.arabic}
           </p>
-          <div className="w-8 h-px bg-[#c8a84b]/50 mx-auto" />
-          <p className="text-[12px] italic text-gray-500 leading-relaxed">
+
+          {/* Separator */}
+          <div className="w-8 h-px bg-[#c8a84b]/50" />
+
+          {/* English translation */}
+          <p className="text-[13px] italic text-gray-500 leading-relaxed">
             &ldquo;{verse.translation}&rdquo;
           </p>
+
+          {/* Citation */}
           <p className="text-[10px] font-bold text-[#c8a84b]/70 uppercase tracking-widest">
-            {verse.verseKey}
+            {formatCitation(verse.verseKey)}
           </p>
-        </div>
+        </>
       ) : (
-        <div className="space-y-2">
-          <div className="h-6 w-48 bg-[#2d3a10]/10 rounded-lg animate-pulse" />
-          <div className="h-4 w-36 bg-[#2d3a10]/08 rounded-lg animate-pulse" />
+        /* Skeleton while JS hydrates — stable, no random content */
+        <div className="space-y-3 w-full animate-pulse">
+          <div className="h-8 w-4/5 bg-[#2d3a10]/8 rounded-lg ml-auto" />
+          <div className="h-8 w-3/5 bg-[#2d3a10]/6 rounded-lg ml-auto" />
+          <div className="w-8 h-px bg-[#c8a84b]/30 mx-auto" />
+          <div className="h-4 w-64 bg-[#2d3a10]/6 rounded-lg mx-auto" />
+          <div className="h-3 w-32 bg-[#c8a84b]/20 rounded-lg mx-auto" />
         </div>
       )}
 

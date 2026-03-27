@@ -54,7 +54,7 @@ export async function addMission(
       icon: mission.icon,
       created_by: userId,
       is_default: false,
-      points: mission.points ?? 10,
+      points: mission.points ?? 100,
       is_special: mission.is_special ?? false,
       visible_to_child: mission.visible_to_child ?? true,
       ...(mission.assigned_to ? { assigned_to: mission.assigned_to } : {}),
@@ -171,26 +171,7 @@ export async function completeMission(
       .select()
       .single();
     if (e2) return null;
-    // Fallback: always grant points (no approval system yet)
-    await addPoints(userId, familyId, points);
-    await updateStreak(userId, familyId);
-    await addActivity(userId, familyId, {
-      description: 'Daily mission completed',
-      points_change: points,
-      icon: 'check-circle',
-    });
     return c2 as MissionCompletion;
-  }
-
-  // Only grant points immediately for parents; children wait for approval
-  if (!isChild) {
-    await addPoints(userId, familyId, points);
-    await updateStreak(userId, familyId);
-    await addActivity(userId, familyId, {
-      description: 'Daily mission completed',
-      points_change: points,
-      icon: 'check-circle',
-    });
   }
 
   return completion as MissionCompletion;
@@ -221,7 +202,10 @@ export async function completeCustomMission(
     await supabase.from('mission_completions').delete().eq('id', existing.id);
   }
 
-  const points = 100;
+  // Fetch mission points dynamically
+  const { data: missionData } = await supabase.from('missions').select('points').eq('id', missionId).single();
+  const points = missionData?.points ?? 100;
+
   const isChild = submitterRole === 'child';
   const status = isChild ? 'pending' : 'approved';
 
@@ -337,13 +321,7 @@ export async function approveCompletion(
     .update({ status: 'approved' })
     .eq('id', completionId);
 
-  await addPoints(userId, familyId, points);
   await updateStreak(userId, familyId);
-  await addActivity(userId, familyId, {
-    description: 'Mission approved by parent',
-    points_change: points,
-    icon: 'check-circle',
-  });
 }
 
 export async function rejectCompletion(
@@ -593,8 +571,9 @@ export async function claimReward(userId: string, familyId: string, rewardId: st
   const reward = rewards.find(r => r.id === rewardId);
   if (!reward || reward.claimed) return false;
 
-  const spent = await spendPoints(userId, familyId, reward.cost);
-  if (!spent) return false;
+  // Insufficient points check
+  const { data: userData } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', familyId).maybeSingle();
+  if (!userData || userData.total_points < reward.cost) return false;
 
   await supabase
     .from('rewards')
@@ -604,12 +583,6 @@ export async function claimReward(userId: string, familyId: string, rewardId: st
       claimed_by: userId,
     })
     .eq('id', rewardId);
-
-  await addActivity(userId, familyId, {
-    description: `Claimed: ${reward.name}`,
-    points_change: -reward.cost,
-    icon: 'gift',
-  });
 
   return true;
 }

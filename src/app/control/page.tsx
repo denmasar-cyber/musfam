@@ -12,7 +12,6 @@ import {
 } from '@/lib/store';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
-import RiverLoading from '@/components/RiverLoading';
 import LoadingBlock from '@/components/LoadingBlock';
 import { Mission, ActivityEntry, Reward } from '@/lib/types';
 import {

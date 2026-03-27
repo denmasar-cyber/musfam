@@ -520,13 +520,22 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- Enable Realtime (skip if already a member)
+-- Safe Enable Realtime for all core tables
 DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication_tables
-    WHERE pubname = 'supabase_realtime' AND tablename = 'family_messages'
-  ) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'family_messages') THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE family_messages;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'points') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE points;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'mission_completions') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE mission_completions;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'missions') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE missions;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'rewards') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE rewards;
   END IF;
 END $$;
 
@@ -1029,6 +1038,173 @@ RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
 $$;
 
 -- ================================================================
+-- Section 33: AUTOMATIC POINT SYNCHRONIZATION (The "Coherent" System)
+-- ================================================================
+-- This trigger system ensures point coherence across all actions.
+-- It automatically updates the points table whenever a mission is 
+-- approved or a reward is claimed.
+
+CREATE OR REPLACE FUNCTION update_user_points_sync()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- MISSION APPROVAL LOGIC
+  IF (TG_TABLE_NAME = 'mission_completions') THEN
+    IF (TG_OP = 'INSERT' AND NEW.status = 'approved') OR 
+       (TG_OP = 'UPDATE' AND OLD.status = 'pending' AND NEW.status = 'approved') THEN
+      
+      INSERT INTO points (user_id, family_id, total_points, updated_at)
+      VALUES (NEW.user_id, NEW.family_id, NEW.points_earned, NOW())
+      ON CONFLICT (user_id, family_id) 
+      DO UPDATE SET 
+        total_points = points.total_points + EXCLUDED.total_points,
+        updated_at = NOW();
+
+      -- Auto-log activity
+      INSERT INTO activity_log (family_id, user_id, description, points_change, icon)
+      VALUES (NEW.family_id, NEW.user_id, 'Mission approved: +' || NEW.points_earned || ' AP', NEW.points_earned, 'stars');
+    END IF;
+
+  -- REWARD CLAIM LOGIC
+  ELSIF (TG_TABLE_NAME = 'rewards') THEN
+    IF (TG_OP = 'UPDATE' AND OLD.claimed = false AND NEW.claimed = true) THEN
+      
+      UPDATE points 
+      SET total_points = total_points - NEW.cost, 
+          updated_at = NOW()
+      WHERE user_id = NEW.claimed_by AND family_id = NEW.family_id;
+
+      -- Auto-log activity
+      INSERT INTO activity_log (family_id, user_id, description, points_change, icon, created_at)
+      VALUES (NEW.family_id, NEW.claimed_by, 'Reward claimed: -' || NEW.cost || ' AP', -NEW.cost, 'gift', NOW());
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Mission trigger
+DROP TRIGGER IF EXISTS tr_sync_points_on_completion ON mission_completions;
+CREATE TRIGGER tr_sync_points_on_completion
+AFTER INSERT OR UPDATE ON mission_completions
+FOR EACH ROW EXECUTE FUNCTION update_user_points_sync();
+
+-- Reward trigger
+DROP TRIGGER IF EXISTS tr_sync_points_on_reward ON rewards;
+CREATE TRIGGER tr_sync_points_on_reward
+AFTER UPDATE ON rewards
+FOR EACH ROW EXECUTE FUNCTION update_user_points_sync();
+
+-- ================================================================
+-- Section 34: RANKING & LEADERBOARD REFRESH
+-- ================================================================
+
+-- Create or replace the view for family points sum
+CREATE OR REPLACE VIEW aura_board AS
+SELECT
+  f.id   AS family_id,
+  f.name AS family_name,
+  COALESCE(SUM(p.total_points), 0)                            AS total_points,
+  RANK() OVER (ORDER BY COALESCE(SUM(p.total_points),0) DESC) AS rank
+FROM families f
+LEFT JOIN points p ON p.family_id = f.id
+GROUP BY f.id, f.name;
+
+GRANT SELECT ON aura_board TO authenticated;
+
+-- ================================================================
+-- Section 35: ADMINISTRATIVE & UTILITY FUNCTIONS
+-- ================================================================
+
+-- Function to clear ALL logs and history for a single user (A "Fresh Start")
+-- Keeps the profile, family, and points but deletes ALL activity/history and messages.
+-- Function to clear ALL logs and history for a single user (Auto-Comprehensive)
+-- Dynamically finds all tables with 'user_id' and purges them for this user.
+CREATE OR REPLACE FUNCTION clear_user_logs(p_user_id UUID)
+RETURNS VOID AS $$
+DECLARE
+  v_table_name TEXT;
+BEGIN
+  -- 1. Automate the "Manual Trash" logic for completed/claimed items
+  -- GUARDIAN POWER: If user is a parent, delete ALL general family missions that are "Done"
+  IF EXISTS (SELECT 1 FROM profiles WHERE id = p_user_id AND role = 'parent') THEN
+    DELETE FROM missions WHERE family_id = (SELECT family_id FROM profiles WHERE id = p_user_id) AND category = 'general' AND id IN (SELECT mission_id FROM mission_completions WHERE status = 'approved');
+    DELETE FROM rewards WHERE family_id = (SELECT family_id FROM profiles WHERE id = p_user_id) AND claimed = true;
+  ELSE
+    -- CHILD POWER: Delete personal/assigned missions that are "Done"
+    DELETE FROM missions WHERE assigned_to = p_user_id AND id IN (SELECT mission_id FROM mission_completions WHERE user_id = p_user_id AND status = 'approved');
+    DELETE FROM rewards WHERE claimed_by = p_user_id;
+  END IF;
+
+  -- 2. Dynamically delete from all tables that have user_id, assigned_to, or claimed_by
+  FOR v_table_name IN 
+    SELECT DISTINCT table_name 
+    FROM information_schema.columns 
+    WHERE table_schema = 'public' 
+      AND column_name IN ('user_id', 'assigned_to', 'claimed_by')
+      AND table_name NOT IN ('profiles', 'points', 'streaks', 'missions', 'rewards') -- Handled above specifically
+  LOOP
+    -- Safely execute deletion for whichever columns exist in the table
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = v_table_name AND column_name = 'user_id') THEN
+      EXECUTE 'DELETE FROM ' || quote_ident(v_table_name) || ' WHERE user_id = $1' USING p_user_id;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = v_table_name AND column_name = 'assigned_to') THEN
+      EXECUTE 'DELETE FROM ' || quote_ident(v_table_name) || ' WHERE assigned_to = $1' USING p_user_id;
+    END IF;
+    -- Note: claimed_by is mainly for rewards, but covered here for completeness
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = v_table_name AND column_name = 'claimed_by') THEN
+       EXECUTE 'UPDATE ' || quote_ident(v_table_name) || ' SET claimed = false, claimed_at = NULL, claimed_by = NULL WHERE claimed_by = $1' USING p_user_id;
+    END IF;
+  END LOOP;
+
+  -- 2. Special Case: Reseting Reward status (un-claim)
+  UPDATE rewards SET claimed = false, claimed_at = NULL, claimed_by = NULL WHERE claimed_by = p_user_id;
+
+  -- 3. Reset Points & Streaks (Instead of deleting the row)
+  UPDATE points SET total_points = 0, updated_at = NOW() WHERE user_id = p_user_id;
+  UPDATE streaks SET current_streak = 0, longest_streak = 0, last_active_date = NULL WHERE user_id = p_user_id;
+
+  -- 4. Reset Hydration count specifically
+  UPDATE hydration SET count = 0 WHERE user_id = p_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function to PERMANENTLY DELETE an account and ALL its data (Auto-Comprehensive)
+CREATE OR REPLACE FUNCTION delete_user_account_complete(p_user_id UUID)
+RETURNS VOID AS $$
+DECLARE
+  v_table_name TEXT;
+BEGIN
+  -- 1. Dynamically delete from all tables (all logs, assignments, claims)
+  FOR v_table_name IN 
+    SELECT DISTINCT table_name 
+    FROM information_schema.columns 
+    WHERE table_schema = 'public' 
+      AND column_name IN ('user_id', 'assigned_to', 'claimed_by')
+      AND table_name NOT IN ('profiles', 'points', 'streaks')
+  LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = v_table_name AND column_name = 'user_id') THEN
+      EXECUTE 'DELETE FROM ' || quote_ident(v_table_name) || ' WHERE user_id = $1' USING p_user_id;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = v_table_name AND column_name = 'assigned_to') THEN
+      EXECUTE 'DELETE FROM ' || quote_ident(v_table_name) || ' WHERE assigned_to = $1' USING p_user_id;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = v_table_name AND column_name = 'claimed_by') THEN
+      EXECUTE 'DELETE FROM ' || quote_ident(v_table_name) || ' WHERE claimed_by = $1' USING p_user_id;
+    END IF;
+  END LOOP;
+
+  -- 2. Delete the base account records
+  DELETE FROM points WHERE user_id = p_user_id;
+  DELETE FROM streaks WHERE user_id = p_user_id;
+  DELETE FROM profiles WHERE id = p_user_id;
+  
+  -- Note: auth.users is handled by Supabase Auth itself, 
+  -- but this cleans up ALL public schema traces of that ID.
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ================================================================
 -- DONE
 -- ================================================================
 -- Tables created / confirmed: families, profiles, missions,
@@ -1039,12 +1215,6 @@ $$;
 -- khatam_votes, verse_cache, chat_clear_timestamps,
 -- community_posts, community_likes, family_connections
 -- Views: aura_board
+-- Triggers: automatic points calculator (coherent system)
 -- Storage buckets: proof-images, voice-notes, avatars
--- Fixed: khatam_sessions bad UNIQUE constraint removed
---        points RLS allows global leaderboard reads
---        activity_log has DELETE policy
---        rewards has DELETE policy
---        khatam tables have DELETE policies
---        families RLS: open select + icon column added
---        ks_select / kv_select: USING(true) for vote count visibility
 -- ================================================================

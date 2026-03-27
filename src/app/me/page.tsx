@@ -345,38 +345,32 @@ export default function MePage() {
   async function clearMyActivity() {
     if (!user || !family) return;
     setDangerLoading(true);
-    await supabase.from('activity_log').delete().eq('user_id', user.id).eq('family_id', family.id);
-    setActivities([]);
-    setConfirmClearActivity(false);
-    setDangerLoading(false);
+    try {
+      // Use the RPC for a comprehensive and atomic cleanup at the DB level
+      await supabase.rpc('clear_user_logs', { p_user_id: user.id });
+      setActivities([]);
+      setConfirmClearActivity(false);
+      // Force a full refresh to clear all global states (points, missions, etc.)
+      window.location.href = '/';
+    } catch (err) {
+      console.error('Error clearing activity:', err);
+    } finally {
+      setDangerLoading(false);
+    }
   }
 
   async function deleteMyAccount() {
     if (!user) return;
     setDangerLoading(true);
     try {
-      // Delete child rows first (FK constraints), then parent rows
-      await supabase.from('khatam_assignments').delete().eq('user_id', user.id);
-      await supabase.from('khatam_votes').delete().eq('user_id', user.id);
-      await Promise.all([
-        supabase.from('quran_bookmarks').delete().eq('user_id', user.id),
-        supabase.from('quran_notes').delete().eq('user_id', user.id),
-        supabase.from('quran_reading_log').delete().eq('user_id', user.id),
-        supabase.from('activity_log').delete().eq('user_id', user.id),
-        supabase.from('mission_completions').delete().eq('user_id', user.id),
-        supabase.from('reflections').delete().eq('user_id', user.id),
-        supabase.from('family_messages').delete().eq('user_id', user.id),
-        supabase.from('streaks').delete().eq('user_id', user.id),
-        supabase.from('points').delete().eq('user_id', user.id),
-        supabase.from('hydration').delete().eq('user_id', user.id),
-        supabase.from('daily_schedule').delete().eq('user_id', user.id),
-        supabase.from('chat_clear_timestamps').delete().eq('user_id', user.id),
-      ]);
-      // Delete profile last — once gone, re-login routes to /onboarding as new user
-      await supabase.from('profiles').delete().eq('id', user.id);
+      // Use the powerful new comprehensive cleanup function at the DB level
+      await supabase.rpc('delete_user_account_complete', { p_user_id: user.id });
+      
       await signOut();
-      // AuthGuard will see user with no profile → redirect to /onboarding
-    } catch {
+      // AuthGuard will handle redirection since profile is gone
+    } catch (err) {
+      console.error('Error deleting account:', err);
+    } finally {
       setDangerLoading(false);
       setConfirmDeleteAccount(false);
     }
@@ -457,58 +451,90 @@ export default function MePage() {
           </div>
         </div>
 
-        {/* ===== ISLAMIC AURA CARD ===== */}
+        {/* ===== ISLAMIC AURA CARD (Visa-style) ===== */}
         <div
-          className="rounded-3xl relative overflow-hidden shadow-2xl cursor-pointer active:scale-[0.98] transition-transform"
-          style={{ background: cardStyle.bg, minHeight: 200 }}
+          className="relative overflow-hidden cursor-pointer active:scale-[0.98] transition-transform select-none"
+          style={{
+            background: currentLevel.card === 'black'
+              ? 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 40%, #0f0f0f 100%)'
+              : currentLevel.card === 'platinum'
+                ? 'linear-gradient(135deg, #1a2508 0%, #2d3a10 45%, #5a6b28 80%, #1a2508 100%)'
+                : currentLevel.card === 'gold'
+                  ? 'linear-gradient(135deg, #78350F 0%, #B45309 30%, #D97706 60%, #92400E 100%)'
+                  : 'linear-gradient(135deg, #2c3a4a 0%, #495e73 40%, #6b8499 65%, #374755 100%)',
+            borderRadius: '16px',
+            aspectRatio: '1.586 / 1',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.4), 0 6px 20px rgba(0,0,0,0.3)',
+          }}
           onClick={() => setShowLevelMap(s => !s)}
         >
-          {/* Islamic geometric pattern overlay */}
-          <div className="absolute inset-0 opacity-10" style={{
-            backgroundImage: 'repeating-linear-gradient(30deg, transparent, transparent 18px, rgba(255,255,255,0.3) 18px, rgba(255,255,255,0.3) 21px), repeating-linear-gradient(-30deg, transparent, transparent 18px, rgba(255,255,255,0.3) 18px, rgba(255,255,255,0.3) 21px)',
+          {/* Islamic star geometric overlay */}
+          <div className="absolute inset-0 pointer-events-none" style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M30 2 L35 22 L55 22 L40 34 L46 54 L30 42 L14 54 L20 34 L5 22 L25 22 Z' stroke='rgba(255,255,255,0.06)' stroke-width='1' fill='none'/%3E%3C/svg%3E")`,
+            backgroundRepeat: 'repeat',
+            backgroundSize: '60px 60px',
           }} />
-          <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }} />
-          <div className="absolute -bottom-6 -left-6 w-28 h-28 rounded-full" style={{ background: 'rgba(0,0,0,0.1)' }} />
 
-          <div className="relative p-5">
-            {/* Top row: ornament + level label */}
-            <div className="flex items-center justify-between mb-4">
+          {/* Sheen gradient overlay */}
+          <div className="absolute inset-0 pointer-events-none" style={{
+            background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 50%, rgba(0,0,0,0.15) 100%)',
+          }} />
+
+          {/* Decorative circle */}
+          <div className="absolute -bottom-10 -right-10 w-40 h-40 rounded-full pointer-events-none"
+            style={{ background: 'rgba(255,255,255,0.04)' }} />
+
+          <div className="relative h-full flex flex-col justify-between p-5">
+            {/* Top row: brand + tier */}
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-2xl">{cardStyle.ornament}</span>
-                <span className="text-[10px] font-bold uppercase tracking-[0.25em]" style={{ color: cardStyle.accent }}>
-                  MUSFAM
-                </span>
+                <span className="text-xl">{cardStyle.ornament}</span>
+                <span className="text-[11px] font-bold tracking-[0.25em] uppercase"
+                  style={{ color: cardStyle.accent }}>MUSFAM</span>
               </div>
-              <span className="text-xs font-extrabold tracking-[0.15em]" style={{ color: cardStyle.text }}>
-                {cardStyle.label}
-              </span>
+              <span className="text-xs font-extrabold tracking-[0.2em]"
+                style={{ color: cardStyle.text }}>{cardStyle.label}</span>
             </div>
 
-            {/* Center: Bismillah Arabic */}
-            <p className="text-center text-[18px] leading-[1.8] mb-3"
-              style={{ fontFamily: "'Amiri Quran', 'Amiri', serif", color: cardStyle.text, opacity: 0.85 }}>
-              {cardStyle.bismillah}
-            </p>
-
-            {/* Divider shimmer */}
-            <div className="w-full h-px mb-3" style={{ background: `linear-gradient(90deg, transparent, ${cardStyle.accent}, transparent)` }} />
-
-            {/* Bottom: name + level + AP */}
-            <div className="flex items-end justify-between">
+            {/* Middle: chip + Aura Points (prominent) */}
+            <div className="flex items-center gap-4">
+              {/* EMV chip */}
+              <div className="w-9 h-7 rounded-[4px] flex-shrink-0" style={{
+                background: currentLevel.card === 'gold' || currentLevel.card === 'black'
+                  ? 'linear-gradient(135deg, #D4A017 0%, #F0C040 50%, #B8860B 100%)'
+                  : 'linear-gradient(135deg, #c0c0c0 0%, #e8e8e8 50%, #a0a0a0 100%)',
+                boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.15)',
+              }}>
+                <div className="w-full h-full rounded-[3px]" style={{
+                  backgroundImage: 'repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.08) 3px,rgba(0,0,0,0.08) 4px), repeating-linear-gradient(90deg,transparent,transparent 3px,rgba(0,0,0,0.08) 3px,rgba(0,0,0,0.08) 4px)',
+                }} />
+              </div>
               <div>
-                <p className="text-[9px] font-bold uppercase tracking-[0.2em] mb-0.5" style={{ color: cardStyle.accent, opacity: 0.7 }}>
+                <p className="text-[8px] font-bold uppercase tracking-[0.25em] leading-none"
+                  style={{ color: `${cardStyle.accent}80` }}>AURA POINTS</p>
+                <p className="font-extrabold text-2xl tabular-nums leading-tight"
+                  style={{ color: cardStyle.text }}>{myPoints.toLocaleString()}</p>
+                <p className="text-[9px] font-bold" style={{ color: cardStyle.accent }}>{currentLevel.name}</p>
+              </div>
+            </div>
+
+            {/* Bottom: name + role */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-[0.2em] mb-0.5"
+                  style={{ color: `${cardStyle.accent}80` }}>
                   {profile?.role === 'parent' ? 'GUARDIAN' : 'MEMBER'}
                 </p>
-                <p className="font-extrabold text-sm tracking-wide" style={{ color: cardStyle.text }}>
+                <p className="font-bold text-sm tracking-wide leading-tight"
+                  style={{ color: cardStyle.text }}>
                   {profile?.name || 'Member'}
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-[9px] font-bold uppercase tracking-[0.2em] mb-0.5" style={{ color: cardStyle.accent, opacity: 0.7 }}>AURA POINTS</p>
-                <p className="font-extrabold text-sm tabular-nums" style={{ color: cardStyle.text }}>
-                  {myPoints.toLocaleString()}
-                </p>
-                <p className="text-[9px] font-bold" style={{ color: cardStyle.accent }}>{currentLevel.name}</p>
+                <p className="text-[9px] font-bold uppercase tracking-[0.15em] mb-0.5"
+                  style={{ color: `${cardStyle.accent}80` }}>FAMILY AP</p>
+                <p className="font-extrabold text-sm tabular-nums leading-none"
+                  style={{ color: cardStyle.text }}>{familyTotalPoints.toLocaleString()}</p>
               </div>
             </div>
           </div>
