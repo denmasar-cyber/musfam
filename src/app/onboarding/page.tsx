@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { createFamily, joinFamily } from '@/lib/families';
@@ -19,7 +19,6 @@ export default function OnboardingPage() {
   const [familyName, setFamilyName] = useState('');
   const [userName, setUserName] = useState('');
   const [role, setRole] = useState<'parent' | 'child'>('parent');
-  const [pin, setPin] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [copied, setCopied] = useState(false);
 
@@ -28,14 +27,9 @@ export default function OnboardingPage() {
   const [joinName, setJoinName] = useState('');
   const [joinRole, setJoinRole] = useState<'parent' | 'child'>('child');
 
-  async function handleCreate(e: React.FormEvent) {
+  const handleCreate = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-
-    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-      setError('PIN must be 4 digits');
-      return;
-    }
 
     if (!user) {
       setError('Not logged in');
@@ -44,7 +38,7 @@ export default function OnboardingPage() {
 
     setLoading(true);
     try {
-      const family = await createFamily(user.id, familyName, pin, userName, role);
+      const family = await createFamily(user.id, familyName, '', userName, role);
       setInviteCode(family.invite_code);
       await refreshProfile();
       setStep('success');
@@ -54,7 +48,7 @@ export default function OnboardingPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [user, familyName, userName, role, refreshProfile]);
 
   async function handleJoin(e: React.FormEvent) {
     e.preventDefault();
@@ -85,20 +79,31 @@ export default function OnboardingPage() {
   }
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-6 bg-cream-light">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="text-center">
-          <h1 className="text-3xl font-extrabold text-forest">Musfam</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            {step === 'choose' && 'Set up your family'}
+    <main className="min-h-screen flex flex-col items-center justify-center px-6" style={{ background: 'linear-gradient(160deg, #1a2508 0%, #2d3a10 60%, #1a2508 100%)' }}>
+      {/* Batik overlay */}
+      <div className="fixed inset-0 pointer-events-none" style={{
+        backgroundImage: 'url(/batik-kawung.png)',
+        backgroundRepeat: 'repeat',
+        backgroundSize: '100px auto',
+        opacity: 0.06,
+        mixBlendMode: 'screen',
+      }} />
+
+      <div className="w-full max-w-sm space-y-6 relative z-10">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <img src="/musfam-logo.png" alt="Musfam" className="h-16 mx-auto object-contain mb-3" />
+          <p className="text-sm font-medium" style={{ color: 'rgba(200,168,75,0.7)' }}>
+            {step === 'choose' && 'Set up your Muslim family'}
             {step === 'create' && 'Create a new family group'}
             {step === 'join' && 'Join a family'}
-            {step === 'success' && 'Family created!'}
+            {step === 'success' && 'Family created! 🌙'}
           </p>
+          <div className="w-16 h-px bg-[#c8a84b]/30 mx-auto mt-3" />
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-xl p-3">
+          <div className="bg-red-900/30 border border-red-500/40 text-red-300 text-sm rounded-xl p-3">
             {error}
           </div>
         )}
@@ -109,28 +114,36 @@ export default function OnboardingPage() {
             <button
               type="button"
               onClick={() => setStep('create')}
-              className="w-full bg-white rounded-2xl p-5 border-2 border-forest/20 hover:border-forest transition-colors text-left flex items-center gap-4"
+              className="w-full rounded-2xl p-5 text-left flex items-center gap-4 active:scale-[0.98] transition-transform"
+              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(200,168,75,0.25)' }}
             >
-              <div className="w-12 h-12 rounded-full bg-forest flex items-center justify-center flex-shrink-0">
-                <Home size={22} className="text-white" />
+              <div className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: 'linear-gradient(135deg, #2d3a10, #5a6b28)' }}>
+                <Home size={22} className="text-[#c8a84b]" />
               </div>
               <div>
-                <p className="font-bold text-gray-800">Create New Family</p>
-                <p className="text-xs text-gray-500">Be the first, invite family members</p>
+                <p className="font-bold text-white">Create New Family</p>
+                <p className="text-xs mt-0.5" style={{ color: 'rgba(200,168,75,0.6)' }}>
+                  Be the first, invite family members
+                </p>
               </div>
             </button>
 
             <button
               type="button"
               onClick={() => setStep('join')}
-              className="w-full bg-white rounded-2xl p-5 border-2 border-forest/20 hover:border-forest transition-colors text-left flex items-center gap-4"
+              className="w-full rounded-2xl p-5 text-left flex items-center gap-4 active:scale-[0.98] transition-transform"
+              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(200,168,75,0.25)' }}
             >
-              <div className="w-12 h-12 rounded-full bg-gold flex items-center justify-center flex-shrink-0">
+              <div className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: 'linear-gradient(135deg, #8a6008, #c8a84b)' }}>
                 <Users size={22} className="text-white" />
               </div>
               <div>
-                <p className="font-bold text-gray-800">Join Family</p>
-                <p className="text-xs text-gray-500">Have an invite code? Join here</p>
+                <p className="font-bold text-white">Join Family</p>
+                <p className="text-xs mt-0.5" style={{ color: 'rgba(200,168,75,0.6)' }}>
+                  Have an invite code? Join here
+                </p>
               </div>
             </button>
           </div>
@@ -140,7 +153,9 @@ export default function OnboardingPage() {
         {step === 'create' && (
           <form onSubmit={handleCreate} className="space-y-4">
             <div>
-              <label htmlFor="familyName" className="block text-sm font-semibold text-gray-700 mb-1">Family Name</label>
+              <label htmlFor="familyName" className="block text-sm font-semibold mb-1" style={{ color: 'rgba(200,168,75,0.8)' }}>
+                Family Name
+              </label>
               <input
                 id="familyName"
                 type="text"
@@ -148,12 +163,15 @@ export default function OnboardingPage() {
                 onChange={e => setFamilyName(e.target.value)}
                 required
                 placeholder="e.g. Al-Ahmad Family"
-                className="w-full rounded-xl border border-cream-dark bg-white p-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30"
+                className="w-full rounded-xl p-3 text-sm focus:outline-none focus:ring-2"
+                style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(200,168,75,0.3)', color: '#f5f0e8', '--tw-ring-color': 'rgba(200,168,75,0.4)' } as React.CSSProperties}
               />
             </div>
 
             <div>
-              <label htmlFor="userName" className="block text-sm font-semibold text-gray-700 mb-1">Your Name</label>
+              <label htmlFor="userName" className="block text-sm font-semibold mb-1" style={{ color: 'rgba(200,168,75,0.8)' }}>
+                Your Name
+              </label>
               <input
                 id="userName"
                 type="text"
@@ -161,60 +179,43 @@ export default function OnboardingPage() {
                 onChange={e => setUserName(e.target.value)}
                 required
                 placeholder="Display name"
-                className="w-full rounded-xl border border-cream-dark bg-white p-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30"
+                className="w-full rounded-xl p-3 text-sm focus:outline-none"
+                style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(200,168,75,0.3)', color: '#f5f0e8' }}
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Your Role</label>
+              <label className="block text-sm font-semibold mb-2" style={{ color: 'rgba(200,168,75,0.8)' }}>Your Role</label>
               <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setRole('parent')}
-                  className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-colors ${role === 'parent' ? 'bg-forest text-white' : 'bg-white text-gray-500 border border-cream-dark'}`}
-                >
-                  Guardian
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRole('child')}
-                  className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-colors ${role === 'child' ? 'bg-forest text-white' : 'bg-white text-gray-500 border border-cream-dark'}`}
-                >
-                  Child
-                </button>
+                {(['parent', 'child'] as const).map(r => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setRole(r)}
+                    className="flex-1 py-2.5 rounded-xl font-bold text-sm transition-all"
+                    style={role === r
+                      ? { background: '#c8a84b', color: '#1a2508' }
+                      : { background: 'rgba(255,255,255,0.07)', color: 'rgba(245,240,232,0.6)', border: '1px solid rgba(200,168,75,0.2)' }
+                    }
+                  >
+                    {r === 'parent' ? 'Guardian' : 'Child'}
+                  </button>
+                ))}
               </div>
-            </div>
-
-            <div>
-              <label htmlFor="pin" className="block text-sm font-semibold text-gray-700 mb-1">Guardian Center PIN (4 digits)</label>
-              <input
-                id="pin"
-                type="password"
-                inputMode="numeric"
-                maxLength={4}
-                value={pin}
-                onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                required
-                placeholder="e.g. 1234"
-                className="w-full rounded-xl border border-cream-dark bg-white p-3 text-sm text-center tracking-[1em] focus:outline-none focus:ring-2 focus:ring-forest/30"
-              />
-              <p className="text-xs text-gray-400 mt-1">This PIN locks the Guardian Command Center</p>
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-xl bg-forest text-white font-bold text-sm hover:bg-forest-light transition-colors disabled:opacity-50"
+              className="w-full py-3 rounded-xl font-bold text-sm disabled:opacity-50 transition-transform active:scale-[0.98]"
+              style={{ background: '#c8a84b', color: '#1a2508' }}
             >
               {loading ? 'Creating...' : 'Create Family'}
             </button>
 
-            <button
-              type="button"
-              onClick={() => { setStep('choose'); setError(''); }}
-              className="w-full py-2 text-sm text-gray-500 hover:text-gray-700"
-            >
-              Back
+            <button type="button" onClick={() => { setStep('choose'); setError(''); }}
+              className="w-full py-2 text-sm" style={{ color: 'rgba(200,168,75,0.5)' }}>
+              ← Back
             </button>
           </form>
         )}
@@ -223,7 +224,7 @@ export default function OnboardingPage() {
         {step === 'join' && (
           <form onSubmit={handleJoin} className="space-y-4">
             <div>
-              <label htmlFor="joinCode" className="block text-sm font-semibold text-gray-700 mb-1">Invite Code</label>
+              <label htmlFor="joinCode" className="block text-sm font-semibold mb-1" style={{ color: 'rgba(200,168,75,0.8)' }}>Invite Code</label>
               <input
                 id="joinCode"
                 type="text"
@@ -232,12 +233,12 @@ export default function OnboardingPage() {
                 required
                 maxLength={6}
                 placeholder="e.g. X7K2AB"
-                className="w-full rounded-xl border border-cream-dark bg-white p-3 text-sm text-center tracking-[0.5em] uppercase focus:outline-none focus:ring-2 focus:ring-forest/30"
+                className="w-full rounded-xl p-3 text-sm text-center tracking-[0.5em] uppercase focus:outline-none"
+                style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(200,168,75,0.3)', color: '#f5f0e8' }}
               />
             </div>
-
             <div>
-              <label htmlFor="joinName" className="block text-sm font-semibold text-gray-700 mb-1">Your Name</label>
+              <label htmlFor="joinName" className="block text-sm font-semibold mb-1" style={{ color: 'rgba(200,168,75,0.8)' }}>Your Name</label>
               <input
                 id="joinName"
                 type="text"
@@ -245,44 +246,33 @@ export default function OnboardingPage() {
                 onChange={e => setJoinName(e.target.value)}
                 required
                 placeholder="Display name"
-                className="w-full rounded-xl border border-cream-dark bg-white p-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30"
+                className="w-full rounded-xl p-3 text-sm focus:outline-none"
+                style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(200,168,75,0.3)', color: '#f5f0e8' }}
               />
             </div>
-
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Your Role</label>
+              <label className="block text-sm font-semibold mb-2" style={{ color: 'rgba(200,168,75,0.8)' }}>Your Role</label>
               <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setJoinRole('parent')}
-                  className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-colors ${joinRole === 'parent' ? 'bg-forest text-white' : 'bg-white text-gray-500 border border-cream-dark'}`}
-                >
-                  Guardian
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setJoinRole('child')}
-                  className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-colors ${joinRole === 'child' ? 'bg-forest text-white' : 'bg-white text-gray-500 border border-cream-dark'}`}
-                >
-                  Child
-                </button>
+                {(['parent', 'child'] as const).map(r => (
+                  <button key={r} type="button" onClick={() => setJoinRole(r)}
+                    className="flex-1 py-2.5 rounded-xl font-bold text-sm transition-all"
+                    style={joinRole === r
+                      ? { background: '#c8a84b', color: '#1a2508' }
+                      : { background: 'rgba(255,255,255,0.07)', color: 'rgba(245,240,232,0.6)', border: '1px solid rgba(200,168,75,0.2)' }
+                    }>
+                    {r === 'parent' ? 'Guardian' : 'Child'}
+                  </button>
+                ))}
               </div>
             </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 rounded-xl bg-forest text-white font-bold text-sm hover:bg-forest-light transition-colors disabled:opacity-50"
-            >
+            <button type="submit" disabled={loading}
+              className="w-full py-3 rounded-xl font-bold text-sm disabled:opacity-50"
+              style={{ background: '#c8a84b', color: '#1a2508' }}>
               {loading ? 'Joining...' : 'Join Family'}
             </button>
-
-            <button
-              type="button"
-              onClick={() => { setStep('choose'); setError(''); }}
-              className="w-full py-2 text-sm text-gray-500 hover:text-gray-700"
-            >
-              Back
+            <button type="button" onClick={() => { setStep('choose'); setError(''); }}
+              className="w-full py-2 text-sm" style={{ color: 'rgba(200,168,75,0.5)' }}>
+              ← Back
             </button>
           </form>
         )}
@@ -290,32 +280,27 @@ export default function OnboardingPage() {
         {/* Step: Success */}
         {step === 'success' && (
           <div className="space-y-4 text-center">
-            <div className="bg-white rounded-2xl p-6 border border-forest/20">
-              <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-                <Check size={32} className="text-green-600" />
-              </div>
-              <p className="font-bold text-gray-800 mb-2">Family &quot;{familyName}&quot; created!</p>
-              <p className="text-sm text-gray-500 mb-4">Share this invite code with your family members:</p>
-
-              <div className="bg-cream-light rounded-xl p-4 flex items-center justify-center gap-3">
-                <span className="text-2xl font-extrabold text-forest tracking-[0.3em]">{inviteCode}</span>
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className="text-gray-400 hover:text-forest"
-                  title="Salin kode"
-                >
-                  {copied ? <Check size={20} className="text-green-500" /> : <Copy size={20} />}
+            <div className="rounded-2xl p-6" style={{ background: 'rgba(200,168,75,0.1)', border: '1px solid rgba(200,168,75,0.3)' }}>
+              <div className="text-4xl mb-3">🌙</div>
+              <p className="font-bold text-white mb-2">Family &quot;{familyName}&quot; created!</p>
+              <p className="text-sm mb-4" style={{ color: 'rgba(200,168,75,0.7)' }}>
+                Share this invite code with your family:
+              </p>
+              <div className="rounded-xl p-4 flex items-center justify-center gap-3"
+                style={{ background: 'rgba(255,255,255,0.07)' }}>
+                <span className="text-2xl font-extrabold tracking-[0.3em]" style={{ color: '#c8a84b' }}>
+                  {inviteCode}
+                </span>
+                <button type="button" onClick={handleCopy} title="Copy invite code"
+                  className="text-[#c8a84b]/60 hover:text-[#c8a84b] transition-colors">
+                  {copied ? <Check size={20} /> : <Copy size={20} />}
                 </button>
               </div>
             </div>
-
-            <button
-              type="button"
-              onClick={() => router.push('/')}
-              className="w-full py-3 rounded-xl bg-forest text-white font-bold text-sm hover:bg-forest-light transition-colors"
-            >
-              Start Using Musfam
+            <button type="button" onClick={() => router.push('/')}
+              className="w-full py-3 rounded-xl font-bold text-sm"
+              style={{ background: '#c8a84b', color: '#1a2508' }}>
+              Start Using Musfam →
             </button>
           </div>
         )}

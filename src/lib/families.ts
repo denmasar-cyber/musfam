@@ -18,21 +18,16 @@ const DEFAULT_REWARDS = [
 export async function createFamily(
   userId: string,
   familyName: string,
-  pin: string,
+  _pin: string,
   userName: string,
   role: 'parent' | 'child'
 ): Promise<Family> {
   const inviteCode = generateInviteCode();
 
-  // Hash PIN via RPC (runs as SECURITY DEFINER — no admin needed)
-  let pinHash = pin;
-  const { data: hashData } = await supabase.rpc('hash_pin', { p_pin: pin });
-  if (hashData) pinHash = hashData;
-
-  // Create family
+  // Create family (PIN protection removed)
   const { data: family, error: familyError } = await supabase
     .from('families')
-    .insert({ name: familyName, invite_code: inviteCode, pin_hash: pinHash, created_by: userId })
+    .insert({ name: familyName, invite_code: inviteCode, pin_hash: '', created_by: userId })
     .select()
     .single();
   if (familyError || !family) throw new Error(familyError?.message || 'Failed to create family');

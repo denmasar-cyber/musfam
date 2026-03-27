@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import PinGate from '@/components/PinGate';
 import {
   getMissions, addMission, deleteMission, updateMission, getTodayCompletions,
   getFamilyPoints, getActivities, getRewards, claimReward,
@@ -70,7 +69,6 @@ export default function ControlPage() {
   const { user, family, profile } = useAuth();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('missions');
-  const [pinVerified, setPinVerified] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Children profiles
@@ -160,16 +158,9 @@ export default function ControlPage() {
 
   useEffect(() => {
     refreshAll();
-    if (family) {
-      const verified = sessionStorage.getItem(`musfam_pin_${family.id}`);
-      if (verified === 'true') setPinVerified(true);
-    }
   }, [refreshAll, family]);
 
-  function handlePinSuccess() {
-    setPinVerified(true);
-    if (family) sessionStorage.setItem(`musfam_pin_${family.id}`, 'true');
-  }
+
 
   async function handleApprove(ap: PendingApproval) {
     if (!family) return;
@@ -270,12 +261,7 @@ export default function ControlPage() {
     <>
       <main className="flex-1 overflow-y-auto hide-scrollbar pb-24">
 
-        {!pinVerified ? (
-          <div className="px-4 py-4">
-            <PinGate familyId={family?.id || ''} onSuccess={handlePinSuccess} />
-          </div>
-        ) : (
-          <>
+        <>
             {/* Header gradient */}
             <div className="bg-gradient-to-br from-forest to-olive px-5 pt-5 pb-6 relative overflow-hidden batik-overlay">
               <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-white/5" />
@@ -823,7 +809,6 @@ export default function ControlPage() {
               </div>
             )}
           </>
-        )}
       </main>
 
       {/* Clear history confirm */}

@@ -4,82 +4,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSwipeDown } from '@/hooks/useSwipeDown';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import RiverLoading from '@/components/RiverLoading';
 import LoadingBlock from '@/components/LoadingBlock';
 import { supabase } from '@/lib/supabase';
 import { getStreak } from '@/lib/store';
 import { Flame, Diamond, Trophy, BookOpen, LogOut, ChevronRight, Camera, Check, X, Loader2, CheckCircle, Trash2, AlertTriangle, Pencil, ShieldCheck, Users } from 'lucide-react';
 import { ActivityEntry } from '@/lib/types';
 
-// Country flags for card display (excluding Israel per policy)
-const COUNTRY_FLAGS = [
-  { code: 'ID', flag: '🇮🇩', name: 'Indonesia' },
-  { code: 'MY', flag: '🇲🇾', name: 'Malaysia' },
-  { code: 'SA', flag: '🇸🇦', name: 'Saudi Arabia' },
-  { code: 'EG', flag: '🇪🇬', name: 'Egypt' },
-  { code: 'TR', flag: '🇹🇷', name: 'Turkey' },
-  { code: 'PK', flag: '🇵🇰', name: 'Pakistan' },
-  { code: 'BD', flag: '🇧🇩', name: 'Bangladesh' },
-  { code: 'NG', flag: '🇳🇬', name: 'Nigeria' },
-  { code: 'SN', flag: '🇸🇳', name: 'Senegal' },
-  { code: 'MA', flag: '🇲🇦', name: 'Morocco' },
-  { code: 'TN', flag: '🇹🇳', name: 'Tunisia' },
-  { code: 'DZ', flag: '🇩🇿', name: 'Algeria' },
-  { code: 'QA', flag: '🇶🇦', name: 'Qatar' },
-  { code: 'AE', flag: '🇦🇪', name: 'UAE' },
-  { code: 'KW', flag: '🇰🇼', name: 'Kuwait' },
-  { code: 'JO', flag: '🇯🇴', name: 'Jordan' },
-  { code: 'IQ', flag: '🇮🇶', name: 'Iraq' },
-  { code: 'IR', flag: '🇮🇷', name: 'Iran' },
-  { code: 'AF', flag: '🇦🇫', name: 'Afghanistan' },
-  { code: 'TJ', flag: '🇹🇯', name: 'Tajikistan' },
-  { code: 'UZ', flag: '🇺🇿', name: 'Uzbekistan' },
-  { code: 'KZ', flag: '🇰🇿', name: 'Kazakhstan' },
-  { code: 'AZ', flag: '🇦🇿', name: 'Azerbaijan' },
-  { code: 'SG', flag: '🇸🇬', name: 'Singapore' },
-  { code: 'BN', flag: '🇧🇳', name: 'Brunei' },
-  { code: 'PH', flag: '🇵🇭', name: 'Philippines' },
-  { code: 'SO', flag: '🇸🇴', name: 'Somalia' },
-  { code: 'ET', flag: '🇪🇹', name: 'Ethiopia' },
-  { code: 'MR', flag: '🇲🇷', name: 'Mauritania' },
-  { code: 'ML', flag: '🇲🇱', name: 'Mali' },
-  { code: 'LY', flag: '🇱🇾', name: 'Libya' },
-  { code: 'SY', flag: '🇸🇾', name: 'Syria' },
-  { code: 'LB', flag: '🇱🇧', name: 'Lebanon' },
-  { code: 'PS', flag: '🇵🇸', name: 'Palestine' },
-  { code: 'US', flag: '🇺🇸', name: 'United States' },
-  { code: 'GB', flag: '🇬🇧', name: 'United Kingdom' },
-  { code: 'FR', flag: '🇫🇷', name: 'France' },
-  { code: 'DE', flag: '🇩🇪', name: 'Germany' },
-  { code: 'NL', flag: '🇳🇱', name: 'Netherlands' },
-  { code: 'CA', flag: '🇨🇦', name: 'Canada' },
-  { code: 'AU', flag: '🇦🇺', name: 'Australia' },
-  { code: 'NZ', flag: '🇳🇿', name: 'New Zealand' },
-  { code: 'ZA', flag: '🇿🇦', name: 'South Africa' },
-  { code: 'TZ', flag: '🇹🇿', name: 'Tanzania' },
-  { code: 'KE', flag: '🇰🇪', name: 'Kenya' },
-];
-
-// Avatar templates — cute genderless creatures using DiceBear "bottts-neutral" style
-// (friendly robots / abstract creatures, no gender, universally appealing)
-const AVATAR_TEMPLATES = [
-  { id: 'critter1',  label: 'Critter 1',  url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam1&backgroundColor=b6e3f4' },
-  { id: 'critter2',  label: 'Critter 2',  url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam2&backgroundColor=c0aede' },
-  { id: 'critter3',  label: 'Critter 3',  url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam3&backgroundColor=d1d4f9' },
-  { id: 'critter4',  label: 'Critter 4',  url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam4&backgroundColor=ffd5dc' },
-  { id: 'critter5',  label: 'Critter 5',  url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam5&backgroundColor=ffdfbf' },
-  { id: 'critter6',  label: 'Critter 6',  url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam6&backgroundColor=c8e6c9' },
-  { id: 'critter7',  label: 'Critter 7',  url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam7&backgroundColor=ffe0b2' },
-  { id: 'critter8',  label: 'Critter 8',  url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam8&backgroundColor=e0f7fa' },
-  { id: 'critter9',  label: 'Critter 9',  url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam9&backgroundColor=fce4ec' },
-  { id: 'critter10', label: 'Critter 10', url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam10&backgroundColor=e8f5e9' },
-  { id: 'critter11', label: 'Critter 11', url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam11&backgroundColor=f3e5f5' },
-  { id: 'critter12', label: 'Critter 12', url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam12&backgroundColor=e3f2fd' },
-  { id: 'critter13', label: 'Critter 13', url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam13&backgroundColor=fff9c4' },
-  { id: 'critter14', label: 'Critter 14', url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam14&backgroundColor=f0f4c3' },
-  { id: 'critter15', label: 'Critter 15', url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam15&backgroundColor=fbe9e7' },
-  { id: 'critter16', label: 'Critter 16', url: 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Musfam16&backgroundColor=e8eaf6' },
-];
+// Remove COUNTRY_FLAGS and AVATAR_TEMPLATES — using upload-only for avatars
 
 // Islamic level system — based on streak + reflections + missions (not points)
 interface IslamicLevel {
@@ -138,34 +69,41 @@ function getNextIslamicLevel(current: IslamicLevel): IslamicLevel | null {
 
 type CardType = 'silver' | 'gold' | 'platinum' | 'black';
 
-const CARD_STYLES: Record<CardType, { bg: string; text: string; accent: string; chip: string; label: string }> = {
+const CARD_STYLES: Record<CardType, {
+  bg: string; text: string; accent: string; label: string;
+  ornament: string; bismillah: string;
+}> = {
   silver: {
-    bg: 'linear-gradient(135deg, #8e9eab 0%, #b0bec5 40%, #cfd8dc 70%, #90a4ae 100%)',
-    text: '#1a2a3a',
-    accent: '#546e7a',
-    chip: '#78909c',
+    bg: 'linear-gradient(140deg, #374151 0%, #6B7280 35%, #9CA3AF 60%, #4B5563 100%)',
+    text: '#F9FAFB',
+    accent: 'rgba(255,255,255,0.6)',
     label: 'SILVER',
+    ornament: '🌙',
+    bismillah: 'بِسْمِ اللَّهِ',
   },
   gold: {
-    bg: 'linear-gradient(135deg, #b8860b 0%, #d4a017 35%, #f0c040 60%, #c8920d 100%)',
-    text: '#3d2a00',
-    accent: '#8b6914',
-    chip: '#a07620',
+    bg: 'linear-gradient(140deg, #78350F 0%, #B45309 30%, #D97706 55%, #92400E 100%)',
+    text: '#FEF3C7',
+    accent: '#FCD34D',
     label: 'GOLD',
+    ornament: '⭐',
+    bismillah: 'بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيْمِ',
   },
   platinum: {
-    bg: 'linear-gradient(135deg, #2d3a10 0%, #3d4e18 40%, #5a6b28 65%, #2d3a10 100%)',
-    text: '#f0f7e8',
-    accent: 'rgba(255,255,255,0.7)',
-    chip: '#5a8a28',
+    bg: 'linear-gradient(140deg, #1a2508 0%, #2d3a10 30%, #5a6b28 60%, #1a2508 100%)',
+    text: '#ECFDF5',
+    accent: '#86EFAC',
     label: 'PLATINUM',
+    ornament: '🌿',
+    bismillah: 'بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيْمِ',
   },
   black: {
-    bg: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 40%, #2d2d2d 70%, #111 100%)',
-    text: '#f5f5dc',
-    accent: '#d4a017',
-    chip: '#333',
-    label: 'BLACK',
+    bg: 'linear-gradient(140deg, #000000 0%, #111111 30%, #1F1F1F 60%, #0A0A0A 100%)',
+    text: '#FEF3C7',
+    accent: '#C8A84B',
+    label: 'ULIL ALBAB',
+    ornament: '☪️',
+    bismillah: 'بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيْمِ',
   },
 };
 
@@ -218,7 +156,6 @@ export default function MePage() {
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [savingAvatar, setSavingAvatar] = useState(false);
-  const [countryFlag, setCountryFlag] = useState<string>('');
 
   const swipeAvatar      = useSwipeDown(() => setShowAvatarPicker(false));
   const swipeAbout       = useSwipeDown(() => setShowAbout(false));
@@ -298,9 +235,6 @@ export default function MePage() {
 
     // Avatar
     if (profile?.avatar_url) setAvatarUrl(profile.avatar_url);
-    // Country flag (stored in localStorage per user)
-    const savedFlag = localStorage.getItem(`musfam_flag_${user.id}`) || '';
-    setCountryFlag(savedFlag);
 
 
     // Parent-specific data
@@ -523,215 +457,118 @@ export default function MePage() {
           </div>
         </div>
 
-        {/* ===== BANK CARD (children only) ===== */}
-        {profile?.role === 'child' ? (
-          <>
-            <div
-              className="rounded-3xl p-5 relative overflow-hidden shadow-2xl cursor-pointer active:scale-[0.98] transition-transform"
-              style={{ background: cardStyle.bg, minHeight: 190 }}
-              onClick={() => setShowLevelMap(s => !s)}
-            >
-              <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-10"
-                style={{ background: cardStyle.text === '#f0f7e8' ? '#fff' : '#000' }} />
-              <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full opacity-5"
-                style={{ background: cardStyle.text === '#f0f7e8' ? '#fff' : '#000' }} />
+        {/* ===== ISLAMIC AURA CARD ===== */}
+        <div
+          className="rounded-3xl relative overflow-hidden shadow-2xl cursor-pointer active:scale-[0.98] transition-transform"
+          style={{ background: cardStyle.bg, minHeight: 200 }}
+          onClick={() => setShowLevelMap(s => !s)}
+        >
+          {/* Islamic geometric pattern overlay */}
+          <div className="absolute inset-0 opacity-10" style={{
+            backgroundImage: 'repeating-linear-gradient(30deg, transparent, transparent 18px, rgba(255,255,255,0.3) 18px, rgba(255,255,255,0.3) 21px), repeating-linear-gradient(-30deg, transparent, transparent 18px, rgba(255,255,255,0.3) 18px, rgba(255,255,255,0.3) 21px)',
+          }} />
+          <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }} />
+          <div className="absolute -bottom-6 -left-6 w-28 h-28 rounded-full" style={{ background: 'rgba(0,0,0,0.1)' }} />
 
-              <div className="flex items-start justify-between mb-5">
-                <div className="w-10 h-8 rounded-md flex items-center justify-center"
-                  style={{ background: `linear-gradient(135deg, ${cardStyle.chip}, ${cardStyle.accent})`, border: `1px solid ${cardStyle.accent}` }}>
-                  <div className="w-6 h-5 rounded grid grid-cols-2 gap-px opacity-70" style={{ background: cardStyle.accent }}>
-                    <div className="bg-white/30 rounded-sm" /><div className="bg-white/30 rounded-sm" />
-                    <div className="bg-white/30 rounded-sm" /><div className="bg-white/30 rounded-sm" />
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-extrabold text-xs tracking-[0.2em]" style={{ color: cardStyle.text, opacity: 0.6 }}>MUSFAM</p>
-                  <p className="font-extrabold text-sm tracking-widest mt-0.5" style={{ color: cardStyle.text }}>{cardStyle.label}</p>
-                </div>
+          <div className="relative p-5">
+            {/* Top row: ornament + level label */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">{cardStyle.ornament}</span>
+                <span className="text-[10px] font-bold uppercase tracking-[0.25em]" style={{ color: cardStyle.accent }}>
+                  MUSFAM
+                </span>
               </div>
+              <span className="text-xs font-extrabold tracking-[0.15em]" style={{ color: cardStyle.text }}>
+                {cardStyle.label}
+              </span>
+            </div>
 
-              <div className="mb-4">
-                <p className="text-xs font-bold mb-1" style={{ color: cardStyle.text, opacity: 0.55 }}>AURA POINTS</p>
-                <p className="font-extrabold text-2xl tracking-wider" style={{ color: cardStyle.text }}>
-                  {String(myPoints).padStart(8, '0').replace(/(.{4})/g, '$1 ').trim()}
+            {/* Center: Bismillah Arabic */}
+            <p className="text-center text-[18px] leading-[1.8] mb-3"
+              style={{ fontFamily: "'Amiri Quran', 'Amiri', serif", color: cardStyle.text, opacity: 0.85 }}>
+              {cardStyle.bismillah}
+            </p>
+
+            {/* Divider shimmer */}
+            <div className="w-full h-px mb-3" style={{ background: `linear-gradient(90deg, transparent, ${cardStyle.accent}, transparent)` }} />
+
+            {/* Bottom: name + level + AP */}
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-[0.2em] mb-0.5" style={{ color: cardStyle.accent, opacity: 0.7 }}>
+                  {profile?.role === 'parent' ? 'GUARDIAN' : 'MEMBER'}
+                </p>
+                <p className="font-extrabold text-sm tracking-wide" style={{ color: cardStyle.text }}>
+                  {profile?.name || 'Member'}
                 </p>
               </div>
-
-              <div className="flex items-end justify-between">
-                <div>
-                  <p className="text-[10px] font-bold opacity-50 mb-0.5" style={{ color: cardStyle.text }}>CARDHOLDER</p>
-                  <div className="flex items-center gap-1.5">
-                    {countryFlag && <span className="text-base leading-none">{countryFlag}</span>}
-                    <p className="font-extrabold text-sm tracking-wide uppercase" style={{ color: cardStyle.text }}>{profile?.name || 'Member'}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-bold opacity-50 mb-0.5" style={{ color: cardStyle.text }}>LEVEL</p>
-                  <p className="font-extrabold text-sm" style={{ color: cardStyle.text }}>{currentLevel.name}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Level progress bar + description */}
-            <div className="bg-white rounded-2xl p-4 border border-cream-dark">
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-sm font-bold text-forest">{currentLevel.name}</p>
-                {nextLevel && <p className="text-[11px] text-gray-400 font-medium">{nextLevel.name} →</p>}
-              </div>
-              <p className="text-[11px] text-gray-500 leading-relaxed mb-2">{currentLevel.desc}</p>
-              <div className="w-full h-2.5 bg-cream-dark rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-700"
-                  style={{ width: `${Math.min(progress, 100)}%`, background: 'linear-gradient(to right, #2d3a10, #d4a017)' }} />
-              </div>
-              <div className="flex items-center justify-between mt-1.5">
-                <p className="text-[11px] text-gray-400">{streak.current_streak} day streak · {reflectionCount} reflections</p>
-                {nextLevel && <p className="text-[11px] text-forest font-semibold">{nextLevel.criteria}</p>}
-              </div>
-            </div>
-
-            {/* Level map (shown when card is tapped) */}
-            {showLevelMap && (
-              <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
-                <div className="px-4 py-3 border-b border-cream-dark flex items-center justify-between">
-                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">All Levels</p>
-                  <button type="button" title="Close level map" onClick={() => setShowLevelMap(false)}
-                    className="w-6 h-6 rounded-full bg-cream-light flex items-center justify-center text-gray-400">
-                    <X size={13} />
-                  </button>
-                </div>
-                <div className="divide-y divide-cream-dark">
-                  {ISLAMIC_LEVELS.map((lvl) => {
-                    const isCurrent = lvl.level === currentLevel.level;
-                    const isUnlocked = lvl.level <= currentLevel.level;
-                    const style = CARD_STYLES[lvl.card];
-                    return (
-                      <div key={lvl.level} className={`flex items-center gap-3 px-4 py-3 ${isCurrent ? 'bg-forest/5' : ''}`}>
-                        <div className="w-10 h-6 rounded-md flex-shrink-0"
-                          style={{ background: style.bg, opacity: isUnlocked ? 1 : 0.35 }} />
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm font-bold ${isCurrent ? 'text-forest' : isUnlocked ? 'text-gray-700' : 'text-gray-400'}`}>
-                            {lvl.name}
-                          </p>
-                          <p className="text-[10px] text-gray-500 leading-relaxed mt-0.5">{lvl.desc}</p>
-                        </div>
-                        {isCurrent && (
-                          <span className="text-[10px] font-bold bg-forest text-white px-2 py-0.5 rounded-full flex-shrink-0">Current</span>
-                        )}
-                        {isUnlocked && !isCurrent && (
-                          <CheckCircle size={14} className="text-forest flex-shrink-0" />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </>
-        ) : (
-          /* Parent — same bank card design as child */
-          <>
-            <div
-              className="rounded-3xl p-5 relative overflow-hidden shadow-2xl cursor-pointer active:scale-[0.98] transition-transform"
-              style={{ background: cardStyle.bg, minHeight: 190 }}
-              onClick={() => setShowLevelMap(s => !s)}
-            >
-              <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-10"
-                style={{ background: cardStyle.text === '#f0f7e8' ? '#fff' : '#000' }} />
-              <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full opacity-5"
-                style={{ background: cardStyle.text === '#f0f7e8' ? '#fff' : '#000' }} />
-
-              <div className="flex items-start justify-between mb-5">
-                <div className="w-10 h-8 rounded-md flex items-center justify-center"
-                  style={{ background: `linear-gradient(135deg, ${cardStyle.chip}, ${cardStyle.accent})`, border: `1px solid ${cardStyle.accent}` }}>
-                  <div className="w-6 h-5 rounded grid grid-cols-2 gap-px opacity-70" style={{ background: cardStyle.accent }}>
-                    <div className="bg-white/30 rounded-sm" /><div className="bg-white/30 rounded-sm" />
-                    <div className="bg-white/30 rounded-sm" /><div className="bg-white/30 rounded-sm" />
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-extrabold text-xs tracking-[0.2em]" style={{ color: cardStyle.text, opacity: 0.6 }}>MUSFAM</p>
-                  <p className="font-extrabold text-sm tracking-widest mt-0.5" style={{ color: cardStyle.text }}>{cardStyle.label}</p>
-                </div>
-              </div>
-
-              <div className="mb-4">
-                <p className="text-xs font-bold mb-1" style={{ color: cardStyle.text, opacity: 0.55 }}>MY AURA</p>
-                <p className="font-extrabold text-2xl tracking-wider" style={{ color: cardStyle.text }}>
-                  {String(myPoints).padStart(8, '0').replace(/(.{4})/g, '$1 ').trim()}
+              <div className="text-right">
+                <p className="text-[9px] font-bold uppercase tracking-[0.2em] mb-0.5" style={{ color: cardStyle.accent, opacity: 0.7 }}>AURA POINTS</p>
+                <p className="font-extrabold text-sm tabular-nums" style={{ color: cardStyle.text }}>
+                  {myPoints.toLocaleString()}
                 </p>
+                <p className="text-[9px] font-bold" style={{ color: cardStyle.accent }}>{currentLevel.name}</p>
               </div>
+            </div>
+          </div>
+        </div>
 
-              <div className="flex items-end justify-between">
-                <div>
-                  <p className="text-[10px] font-bold opacity-50 mb-0.5" style={{ color: cardStyle.text }}>GUARDIAN</p>
-                  <div className="flex items-center gap-1.5">
-                    {countryFlag && <span className="text-base leading-none">{countryFlag}</span>}
-                    <p className="font-extrabold text-sm tracking-wide uppercase" style={{ color: cardStyle.text }}>{profile?.name || 'Guardian'}</p>
+        {/* Level progress bar + description */}
+        <div className="bg-white rounded-2xl p-4 border border-cream-dark">
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-sm font-bold text-forest">{currentLevel.name}</p>
+            {nextLevel && <p className="text-[11px] text-gray-400 font-medium">{nextLevel.name} →</p>}
+          </div>
+          <p className="text-[11px] text-gray-500 leading-relaxed mb-2">{currentLevel.desc}</p>
+          <div className="w-full h-2.5 bg-cream-dark rounded-full overflow-hidden">
+            <div className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${Math.min(progress, 100)}%`, background: 'linear-gradient(to right, #2d3a10, #d4a017)' }} />
+          </div>
+          <div className="flex items-center justify-between mt-1.5">
+            <p className="text-[11px] text-gray-400">{streak.current_streak} day streak · {reflectionCount} reflections</p>
+            {nextLevel && <p className="text-[11px] text-forest font-semibold">{nextLevel.criteria}</p>}
+          </div>
+        </div>
+
+        {/* Level map (shown when card tapped) */}
+        {showLevelMap && (
+          <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
+            <div className="px-4 py-3 border-b border-cream-dark flex items-center justify-between">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">All Levels</p>
+              <button type="button" title="Close level map" onClick={() => setShowLevelMap(false)}
+                className="w-6 h-6 rounded-full bg-cream-light flex items-center justify-center text-gray-400">
+                <X size={13} />
+              </button>
+            </div>
+            <div className="divide-y divide-cream-dark">
+              {ISLAMIC_LEVELS.map((lvl) => {
+                const isCurrent = lvl.level === currentLevel.level;
+                const isUnlocked = lvl.level <= currentLevel.level;
+                const lvlStyle = CARD_STYLES[lvl.card];
+                return (
+                  <div key={lvl.level} className={`flex items-center gap-3 px-4 py-3 ${isCurrent ? 'bg-forest/5' : ''}`}>
+                    <div className="w-10 h-6 rounded-md flex-shrink-0"
+                      style={{ background: lvlStyle.bg, opacity: isUnlocked ? 1 : 0.35 }} />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-bold ${isCurrent ? 'text-forest' : isUnlocked ? 'text-gray-700' : 'text-gray-400'}`}>
+                        {lvl.name}
+                      </p>
+                      <p className="text-[10px] text-gray-500 leading-relaxed mt-0.5">{lvl.desc}</p>
+                    </div>
+                    {isCurrent && (
+                      <span className="text-[10px] font-bold bg-forest text-white px-2 py-0.5 rounded-full flex-shrink-0">Current</span>
+                    )}
+                    {isUnlocked && !isCurrent && (
+                      <CheckCircle size={14} className="text-forest flex-shrink-0" />
+                    )}
                   </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-bold opacity-50 mb-0.5" style={{ color: cardStyle.text }}>LEVEL</p>
-                  <p className="font-extrabold text-sm" style={{ color: cardStyle.text }}>{currentLevel.name}</p>
-                </div>
-              </div>
+                );
+              })}
             </div>
-
-            {/* Level progress bar + description */}
-            <div className="bg-white rounded-2xl p-4 border border-cream-dark">
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-sm font-bold text-forest">{currentLevel.name}</p>
-                {nextLevel && <p className="text-[11px] text-gray-400 font-medium">{nextLevel.name} →</p>}
-              </div>
-              <p className="text-[11px] text-gray-500 leading-relaxed mb-2">{currentLevel.desc}</p>
-              <div className="w-full h-2.5 bg-cream-dark rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-700"
-                  style={{ width: `${Math.min(progress, 100)}%`, background: 'linear-gradient(to right, #2d3a10, #d4a017)' }} />
-              </div>
-              <div className="flex items-center justify-between mt-1.5">
-                <p className="text-[11px] text-gray-400">{streak.current_streak} day streak</p>
-                {nextLevel && <p className="text-[11px] text-forest font-semibold">{nextLevel.criteria}</p>}
-              </div>
-            </div>
-
-            {/* Level map (shown when card is tapped) */}
-            {showLevelMap && (
-              <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
-                <div className="px-4 py-3 border-b border-cream-dark flex items-center justify-between">
-                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">All Levels</p>
-                  <button type="button" title="Close level map" onClick={() => setShowLevelMap(false)}
-                    className="w-6 h-6 rounded-full bg-cream-light flex items-center justify-center text-gray-400">
-                    <X size={13} />
-                  </button>
-                </div>
-                <div className="divide-y divide-cream-dark">
-                  {ISLAMIC_LEVELS.map((lvl) => {
-                    const isCurrent = lvl.level === currentLevel.level;
-                    const isUnlocked = lvl.level <= currentLevel.level;
-                    const style = CARD_STYLES[lvl.card];
-                    return (
-                      <div key={lvl.level} className={`flex items-center gap-3 px-4 py-3 ${isCurrent ? 'bg-forest/5' : ''}`}>
-                        <div className="w-10 h-6 rounded-md flex-shrink-0"
-                          style={{ background: style.bg, opacity: isUnlocked ? 1 : 0.35 }} />
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm font-bold ${isCurrent ? 'text-forest' : isUnlocked ? 'text-gray-700' : 'text-gray-400'}`}>
-                            {lvl.name}
-                          </p>
-                          <p className="text-[10px] text-gray-500 leading-relaxed mt-0.5">{lvl.desc}</p>
-                        </div>
-                        {isCurrent && (
-                          <span className="text-[10px] font-bold bg-forest text-white px-2 py-0.5 rounded-full flex-shrink-0">Current</span>
-                        )}
-                        {isUnlocked && !isCurrent && (
-                          <CheckCircle size={14} className="text-forest flex-shrink-0" />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </>
+          </div>
         )}
+
 
         {/* Stats row */}
         <div className="grid grid-cols-3 gap-2.5">
@@ -926,26 +763,9 @@ export default function MePage() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4 pb-8" style={{ WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }}>
-              {/* Templates */}
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Templates</p>
-              <div className="grid grid-cols-4 gap-3">
-                {AVATAR_TEMPLATES.map(t => (
-                  <button key={t.id} type="button"
-                    title={t.label}
-                    onClick={() => saveAvatar(t.url)}
-                    className="flex flex-col items-center group"
-                    disabled={savingAvatar}
-                  >
-                    <div className={`w-16 h-16 rounded-2xl overflow-hidden border-2 transition-all ${avatarUrl === t.url ? 'border-[#2d3a10] ring-2 ring-[#2d3a10]/30' : 'border-gray-200 group-hover:border-[#2d3a10]/40'}`}>
-                      <img src={t.url} alt={t.label} className="w-full h-full object-cover" loading="lazy" />
-                    </div>
-                  </button>
-                ))}
-              </div>
-
               {/* Upload from device */}
               <div>
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Upload from Device</p>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Upload Photo</p>
                 <label className={`flex items-center gap-2.5 cursor-pointer rounded-2xl border-2 border-dashed px-4 py-3 transition-colors ${savingAvatar ? 'opacity-50 pointer-events-none' : 'border-gray-200 hover:border-[#2d3a10]/40 hover:bg-[#2d3a10]/5'}`}>
                   {savingAvatar
                     ? <><Loader2 size={16} className="text-[#2d3a10] animate-spin flex-shrink-0" /><span className="text-sm text-gray-500">Uploading...</span></>
@@ -963,27 +783,6 @@ export default function MePage() {
                   Remove Avatar
                 </button>
               )}
-
-              {/* Country flag for card */}
-              <div>
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">My Country Flag</p>
-                <p className="text-[10px] text-gray-400 mb-2">Shown on your Aura card — Bhinneka Tunggal Ika</p>
-                <div className="grid grid-cols-6 gap-2">
-                  <button type="button"
-                    onClick={() => { setCountryFlag(''); if (user) localStorage.setItem(`musfam_flag_${user.id}`, ''); }}
-                    className={`h-9 rounded-lg text-xs font-bold flex items-center justify-center transition-all ${!countryFlag ? 'bg-forest/15 ring-2 ring-forest' : 'bg-cream-light text-gray-400'}`}>
-                    None
-                  </button>
-                  {COUNTRY_FLAGS.map(c => (
-                    <button key={c.code} type="button"
-                      title={c.name}
-                      onClick={() => { setCountryFlag(c.flag); if (user) localStorage.setItem(`musfam_flag_${user.id}`, c.flag); }}
-                      className={`h-9 rounded-lg text-xl flex items-center justify-center transition-all ${countryFlag === c.flag ? 'bg-forest/15 ring-2 ring-forest' : 'bg-cream-light hover:bg-cream-dark'}`}>
-                      {c.flag}
-                    </button>
-                  ))}
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -1019,7 +818,6 @@ export default function MePage() {
             title: 'Fajr Al-Garuda',
             subtitle: 'A Product of',
             body: 'The dawn of the archipelago — soaring to split the sky for the benefit of the Ummah, from Indonesia to the world.',
-            footer: 'MUSFAM v1.0 · QURAN HACKATHON 2025',
           },
         ];
         const step = ABOUT_STEPS[aboutStep - 1];
