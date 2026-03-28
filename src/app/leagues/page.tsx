@@ -12,7 +12,7 @@ import {
   getPendingApprovals, getRejectedCompletions, approveCompletion, rejectCompletion,
   uploadProofImage, getStreak,
 } from '@/lib/store';
-import { getDailyVerseKey } from '@/lib/quran-api';
+import { getDailyVerseKey, getAppDate } from '@/lib/quran-api';
 import type { Mission, ActivityEntry, Reward, DailyMission, PendingApproval } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -186,7 +186,7 @@ export default function LeaguesPage() {
 
   const refreshMissions = useCallback(async () => {
     if (!family || !user || !profile) return;
-    const today = new Date().toISOString().split('T')[0];
+    const today = getAppDate().toISOString().split('T')[0];
     const verseKey = getDailyVerseKey();
     const [mission, completed, allMissions, acts] = await Promise.all([
       getDailyMission(family.id, today, verseKey),

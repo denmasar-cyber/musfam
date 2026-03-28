@@ -75,10 +75,11 @@ function gregorianToHijri(date: Date): { day: number; month: number; year: numbe
 const SURAH_NAMES_HOME: any /* Record<number, string> */ = {
   1:'Al-Fatihah',2:'Al-Baqarah',3:'Al-Imran',4:'An-Nisa',13:'Ar-Ra\'d',14:'Ibrahim',
   17:'Al-Isra',18:'Al-Kahf',29:'Al-Ankabut',33:'Al-Ahzab',39:'Az-Zumar',55:'Ar-Rahman',
-  59:'Al-Hashr',64:'At-Taghaabun',65:'At-Talaq',73:'Al-Muzzammil',76:'Al-Insan',
+  58:'Al-Mujadila',59:'Al-Hashr',64:'At-Taghaabun',65:'At-Talaq',73:'Al-Muzzammil',76:'Al-Insan',
   93:'Ad-Duha',94:'Al-Inshirah',96:'Al-Alaq',
 };
 function fmtVerseRef(key: string) {
+  if (!key) return '';
   const [ch, ay] = key.split(':');
   const name = SURAH_NAMES_HOME[parseInt(ch)] || 'Surah ' + ch;
   return `${name} ${ch}:${ay}`;

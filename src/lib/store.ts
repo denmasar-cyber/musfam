@@ -22,6 +22,13 @@ export async function getDailyMission(familyId: string, _date: string, _verseKey
   const { data: existing } = await supabase.from('daily_missions').select('*').eq('family_id', familyId).eq('date', _date).maybeSingle();
   const isPlaceholder = existing && (existing.generated_text || '').includes('🛡️ GENERATING');
   const isStale = existing && existing.verse_key !== _verseKey;
+  
+  if (isStale) {
+    // 🛡️ FRESH START: If the verse changes, the mission is NEW.
+    // We clear old completions so the family can experience the new mission.
+    await supabase.from('mission_completions').delete().eq('family_id', familyId).eq('date', _date).is('mission_id', null);
+  }
+
   if (existing && !isPlaceholder && !isStale) return existing as DailyMission;
   
   let finalVerseText = verseText;
