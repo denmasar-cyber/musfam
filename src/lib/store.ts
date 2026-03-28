@@ -21,8 +21,22 @@ export interface VerseOfDay {
 export async function getDailyMission(familyId: string, _date: string, _verseKey: string, verseText?: string, familyName?: string): Promise<DailyMission | null> {
   const { data: existing } = await supabase.from('daily_missions').select('*').eq('family_id', familyId).eq('date', _date).maybeSingle();
   const isPlaceholder = existing && (existing.generated_text || '').includes('🛡️ GENERATING');
-  if (existing && !isPlaceholder) return existing as DailyMission;
-  const { missionText, reflectionPrompt, verseKey } = await generateDailyMissionSemantic(new Date(_date), verseText, _verseKey, familyName);
+  const isStale = existing && existing.verse_key !== _verseKey;
+  if (existing && !isPlaceholder && !isStale) return existing as DailyMission;
+  
+  let finalVerseText = verseText;
+  if (!finalVerseText) {
+    try {
+      const [chap, ay] = _verseKey.split(':');
+      const res = await fetch(`https://api.quran.com/api/v4/verses/by_key/${_verseKey}?translations=131&fields=text_uthmani`);
+      if (res.ok) {
+        const d = await res.json();
+        finalVerseText = d.verse?.translations?.[0]?.text || '';
+      }
+    } catch { /* ignore */ }
+  }
+
+  const { missionText, reflectionPrompt, verseKey } = await generateDailyMissionSemantic(new Date(_date), finalVerseText, _verseKey, familyName);
   const { data: created, error } = await supabase.from('daily_missions').upsert({
     id: existing?.id,
     family_id: familyId,
