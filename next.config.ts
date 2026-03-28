@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'api.multiavatar.com' },
     ],
   },
+  output: 'standalone',
 };
 
 export default nextConfig;
