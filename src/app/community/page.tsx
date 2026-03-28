@@ -266,6 +266,8 @@ export default function CommunityPage() {
     );
   }
 
+  if (typeof window === 'undefined') return <LoadingBlock fullScreen />;
+
   return (
     <>
       {/* Header */}

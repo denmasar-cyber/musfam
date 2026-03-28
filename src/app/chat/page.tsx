@@ -332,6 +332,8 @@ export default function ChatPage() {
     return <LoadingBlock fullScreen />;
   }
 
+  if (typeof window === 'undefined') return <LoadingBlock fullScreen />;
+
   return (
     <>
       {showVideoCall && (

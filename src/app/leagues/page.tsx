@@ -460,6 +460,8 @@ export default function LeaguesPage() {
   const reflectionCharCount = reflectionText.trim().length;
   const myRank = auraBoard.find(r => r.family_id === family?.id);
 
+  if (typeof window === 'undefined') return <LoadingBlock fullScreen />;
+
   return (
     <>
       <main className="flex-1 overflow-y-auto hide-scrollbar pb-24 page-enter">

@@ -410,6 +410,8 @@ export default function MePage() {
     return <LoadingBlock fullScreen />;
   }
 
+  if (typeof window === 'undefined') return <LoadingBlock fullScreen />;
+
   return (
     <>
       <main className="flex-1 overflow-y-auto hide-scrollbar px-4 py-4 space-y-4 pb-24 page-enter">

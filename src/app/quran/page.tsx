@@ -902,6 +902,8 @@ export default function QuranPage() {
   }, [user, family, profile, selectedChapter]);
 
   /* ─── Render ──────────────────────────────────────────── */
+  if (typeof window === 'undefined') return <LoadingBlock fullScreen />;
+
   return (
     <>
 

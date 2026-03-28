@@ -3,9 +3,6 @@
 export const dynamic = 'force-dynamic';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Outfit, Inter } from "next/font/google";
-const outfit = Outfit({ subsets: ["latin"] });
-const inter = Inter({ subsets: ["latin"] });
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useSwipeDown } from '@/hooks/useSwipeDown';
@@ -676,6 +673,8 @@ export default function HomePage() {
   const greetingHour = today.getHours();
   const greeting = greetingHour < 12 ? 'Good morning' : greetingHour < 17 ? 'Good afternoon' : 'Good evening';
   const auraLevel = familyPoints >= 5000 ? 'Black' : familyPoints >= 1500 ? 'Platinum' : familyPoints >= 500 ? 'Gold' : 'Silver';
+
+  if (typeof window === 'undefined') return <LoadingBlock fullScreen />;
 
   return (
     <>
