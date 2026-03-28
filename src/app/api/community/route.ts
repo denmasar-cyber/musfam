@@ -2,12 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 function getSupabase(req: NextRequest) {
-  const authHeader = req.headers.get('authorization') || '';
-  const token = authHeader.replace('Bearer ', '');
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    token ? { global: { headers: { Authorization: `Bearer ${token}` } } } : {}
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
   return supabase;
 }
