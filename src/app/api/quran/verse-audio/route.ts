@@ -20,15 +20,12 @@ export async function GET(request: NextRequest) {
 
   for (const rid of tryOrder) {
     try {
-      // Quran Foundation API: get all recitation files for the chapter, find the verse
-      const [chapter] = verseKey.split(':');
-      const res = await quranFetch(`/recitations/${rid}/by_chapter/${chapter}`);
+      // Quran Foundation API: direct ayah fetch to avoid chapter pagination issues
+      const res = await quranFetch(`/recitations/${rid}/by_ayah/${verseKey}`);
       if (!res.ok) continue;
 
       const data = await res.json();
-      // audio_files is an array of objects with { verse_key, url, ... }
-      const audioFiles: Array<{ verse_key: string; url: string }> = data.audio_files || [];
-      const match = audioFiles.find((f) => f.verse_key === verseKey);
+      const match = data.audio_files?.[0]; // Usually first and only match
 
       if (match?.url) {
         // Quran Foundation CDN base

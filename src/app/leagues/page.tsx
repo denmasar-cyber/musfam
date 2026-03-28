@@ -12,6 +12,7 @@ import {
   getPendingApprovals, getRejectedCompletions, approveCompletion, rejectCompletion,
   uploadProofImage, getStreak,
 } from '@/lib/store';
+import { getDailyVerseKey } from '@/lib/quran-api';
 import type { Mission, ActivityEntry, Reward, DailyMission, PendingApproval } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -50,25 +51,18 @@ interface CompletionTarget {
   prompt?: string;
 }
 
-const DAILY_VERSES = ['2:255','1:1','2:286','3:173','2:152','3:200','39:53','94:5','94:6','2:45','13:28','65:3','2:177','17:80','18:10','33:41','2:153','3:139','4:103','29:45','73:20','76:9','59:22','2:261'];
-
 // Short surah name map for citation display
 const SURAH_NAMES: Record<number, string> = {
   1:'Al-Fatihah',2:'Al-Baqarah',3:'Al-Imran',4:'An-Nisa',13:'Ar-Ra\'d',14:'Ibrahim',17:'Al-Isra',
-  18:'Al-Kahf',29:'Al-Ankabut',33:'Al-Ahzab',39:'Az-Zumar',45:'Al-Jathiyah',59:'Al-Hashr',
+  18:'Al-Kahf',29:'Al-Ankabut',33:'Al-Ahzab',39:'Az-Zumar',45:'Al-Jathiyah',58:'Al-Mujadila',59:'Al-Hashr',
   62:'Al-Jumuah',64:'At-Taghaabun',65:'At-Talaq',73:'Al-Muzzammil',76:'Al-Insan',94:'Al-Inshirah',96:'Al-Alaq',
 };
 
 function formatVerseRef(verseKey: string): string {
+  if (!verseKey) return '';
   const [chapter, ayah] = verseKey.split(':');
   const name = SURAH_NAMES[parseInt(chapter)] || `Surah ${chapter}`;
-  return `${name}: ${ayah}`;
-}
-
-function getDailyVerseKey() {
-  const start = new Date(new Date().getFullYear(), 0, 0);
-  const dayOfYear = Math.floor((+new Date() - +start) / 86400000);
-  return DAILY_VERSES[dayOfYear % DAILY_VERSES.length];
+  return `${name} ${chapter}:${ayah}`;
 }
 
 function formatRelative(dateStr: string) {
