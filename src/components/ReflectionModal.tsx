@@ -40,7 +40,8 @@ export default function ReflectionModal({ missionId, onClose, onComplete }: Refl
     const verseRef = getRandomVerseRef();
     const fetchedVerse = await fetchVerse(verseRef.chapter, verseRef.verse);
 
-    const completion = await completeMission(user.id, family.id, missionId, reflectionText);
+    const today = new Date().toISOString().split('T')[0];
+    const { data: completion } = await completeMission(user.id, family.id, missionId, today, true, undefined, undefined, 100, reflectionText, 'child');
 
     if (fetchedVerse && completion) {
       setVerse(fetchedVerse);

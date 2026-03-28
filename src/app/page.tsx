@@ -1,29 +1,35 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Outfit, Inter } from "next/font/google";
+const outfit = Outfit({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"] });
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { useSwipeDown } from '@/hooks/useSwipeDown';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
+import { useRouter } from 'next/navigation';
 import {
-  getDailyMission, completeMission, hasCompletedDailyMission,
-  getFamilyPoints, uploadProofImage,
-  getMissions, getRewards, completeCustomMission, isMissionCompletedToday, getTodayCompletions,
-  getPendingApprovals, approveCompletion, rejectCompletion, getRejectedCompletions,
-  DailyMission, PendingApproval,
+  getDailyMission, hasCompletedDailyMission,
+  getMissions, getRewards, getTodayCompletions,
+  completeMission, completeCustomMission, uploadProofImage,
+  getPendingApprovals, approveCompletion, rejectCompletion,
+  getFamilyPoints
 } from '@/lib/store';
-import type { Mission, Reward } from '@/lib/types';
+import { getAppDate, getDailyVerseKey } from '@/lib/quran-api';
+import { Mission, Reward, DailyMission, Profile, PendingApproval } from '@/lib/types';
 import { BookOpen, CheckCircle, Diamond, ArrowUpRight, ImageIcon, ChevronRight, Star, Loader2, Play, Pause, Volume2, Trophy, Gift, Check, Clock, AlertCircle, XCircle, ThumbsUp, ThumbsDown, Plus, Trash2 } from 'lucide-react';
 import LoadingBlock from '@/components/LoadingBlock';
 import Link from 'next/link';
-import { useSwipeDown } from '@/hooks/useSwipeDown';
 
-// Map Lucide icon name strings (stored in DB by old control page) → emoji
-const LUCIDE_ICON_EMOJI: Record<string, string> = {
+// Map Lucide icon name strings (stored in DB by old control page) -> emoji
+const LUCIDE_ICON_EMOJI: { [key: string]: string } = {
   'sparkles': '✨', 'home': '🏠', 'book-open': '📖', 'activity': '🏃',
   'check-circle': '✅', 'gift': '🎁', 'sun': '☀️', 'alert-circle': '⚠️',
   'star': '⭐', 'heart': '❤️', 'moon': '🌙', 'book': '📚', 'pray': '🤲',
 };
 
-// Resolve icon field → either a data URL, an emoji string, or null (use category dot)
+// Resolve icon field -> either a data URL, an emoji string, or null (use category dot)
 function resolveIcon(icon: string | undefined | null): { type: 'image'; src: string } | { type: 'emoji'; char: string } | { type: 'dot' } {
   if (!icon) return { type: 'dot' };
   if (icon.startsWith('data:')) return { type: 'image', src: icon };
@@ -66,23 +72,8 @@ function gregorianToHijri(date: Date): { day: number; month: number; year: numbe
   return { day, month, year, monthName: HIJRI_MONTHS[month - 1] ?? '' };
 }
 
-function getDailyVerseKey(): string {
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const weekOfYear = Math.floor((+now - +new Date(now.getFullYear(), 0, 1)) / 604800000);
-  const THEMES: Record<number, string[]> = {
-    0: ['2:255','65:3','3:173','4:81','8:2','58:22','67:1'],
-    1: ['14:7','55:13','93:11','2:152','27:19','17:3','76:9'],
-    2: ['4:103','20:14','29:45','2:45','23:1','17:78','62:9'],
-    3: ['31:14','17:23','17:24','3:103','49:10','4:36','9:128'],
-    4: ['2:153','3:200','2:177','3:139','39:10','16:127','70:5'],
-    5: ['2:261','57:7','76:8','2:177','93:9','64:16','3:92'],
-    6: ['47:24','4:82','38:29','96:1','73:4','17:9','59:21'],
-  };
-  const pool = THEMES[dayOfWeek] ?? THEMES[0];
-  return pool[weekOfYear % pool.length];
-}
-const SURAH_NAMES_HOME: Record<number, string> = {
+
+const SURAH_NAMES_HOME: any /* Record<number, string> */ = {
   1:'Al-Fatihah',2:'Al-Baqarah',3:'Al-Imran',4:'An-Nisa',13:'Ar-Ra\'d',14:'Ibrahim',
   17:'Al-Isra',18:'Al-Kahf',29:'Al-Ankabut',33:'Al-Ahzab',39:'Az-Zumar',55:'Ar-Rahman',
   59:'Al-Hashr',64:'At-Taghaabun',65:'At-Talaq',73:'Al-Muzzammil',76:'Al-Insan',
@@ -98,7 +89,7 @@ function fmtVerseRef(key: string) {
 const PRAYER_NAMES = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
 
 function PrayerTimesCard() {
-  const [times, setTimes] = useState<Record<string, string> | null>(null);
+  const [times, setTimes] = useState<{ [key: string]: string } | null>(null);
   useEffect(() => {
     navigator.geolocation?.getCurrentPosition(
       pos => {
@@ -149,7 +140,7 @@ function PrayerTimesCard() {
 }
 
 export default function HomePage() {
-  const { user, profile, family } = useAuth();
+  const { user, profile, family, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(true);
   const [verseOfDay, setVerseOfDay] = useState<VerseOfDay | null>(null);
   const [verseLoading, setVerseLoading] = useState(true);
@@ -167,6 +158,7 @@ export default function HomePage() {
   const [khatamSession, setKhatamSession] = useState<{ status: string; done: number } | null>(null);
   const [hadithOfDay, setHadithOfDay] = useState<{ narrator: string; text: string } | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [todayComps, setTodayComps] = useState<any[]>([]);
   // Dashboard tabs
   type DashTab = 'missions' | 'aura';
   const [dashTab, setDashTab] = useState<DashTab>('missions');
@@ -175,7 +167,7 @@ export default function HomePage() {
   const [completedCustomIds, setCompletedCustomIds] = useState<Set<string>>(new Set());
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [myPoints, setMyPoints] = useState(0);
-  const [memberPoints, setMemberPoints] = useState<Record<string, number>>({});
+  const [memberPoints, setMemberPoints] = useState<{ [key: string]: number }>({});
   // Aura board
   const [familyAuraBoard, setFamilyAuraBoard] = useState<{ id: string; name: string; pts: number; isMe: boolean }[]>([]);
   const [familyBoardByFamily, setFamilyBoardByFamily] = useState<{ family_id: string; family_name: string; total_points: number; rank: number }[]>([]);
@@ -190,7 +182,6 @@ export default function HomePage() {
   const [newMissionVisible, setNewMissionVisible] = useState(true);
   const [newMissionAssignTo, setNewMissionAssignTo] = useState<string>('');
   const [newMissionIcon, setNewMissionIcon] = useState('📖');
-  const [addingMission, setAddingMission] = useState(false);
   // Parent: Add Reward
   const [showAddReward, setShowAddReward] = useState(false);
   const [newRewardClass, setNewRewardClass] = useState<'general' | 'specific'>('general');
@@ -199,6 +190,7 @@ export default function HomePage() {
   const [newRewardCost, setNewRewardCost] = useState('150');
   const [newRewardAssignTo, setNewRewardAssignTo] = useState<string>('');
   const [addingReward, setAddingReward] = useState(false);
+  const [addingMission, setAddingMission] = useState(false);
   // Family members (for assignment dropdown)
   const [familyMembers, setFamilyMembers] = useState<{ id: string; name: string; role: string }[]>([]);
   // Approval system
@@ -212,8 +204,27 @@ export default function HomePage() {
   const [verseAudioUrl, setVerseAudioUrl] = useState<string | null>(null);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioLoading, setAudioLoading] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [audioRef] = useState(() => typeof Audio !== 'undefined' ? new Audio() : null);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [reviewingApproval, setReviewingApproval] = useState<PendingApproval | null>(null);
+  const [parentFeedback, setParentFeedback] = useState('');
   const reflectionContentRef = useRef<HTMLDivElement>(null);
+
+  // Sync audio progress
+  useEffect(() => {
+    if (!audioRef) return;
+    const update = () => {
+      setAudioCurrentTime(audioRef.currentTime);
+      setAudioDuration(audioRef.duration || 0);
+    };
+    audioRef.addEventListener('timeupdate', update);
+    audioRef.addEventListener('loadedmetadata', update);
+    return () => {
+      audioRef.removeEventListener('timeupdate', update);
+      audioRef.removeEventListener('loadedmetadata', update);
+    };
+  }, [audioRef]);
 
   const closeReflectionModal = useCallback(() => {
     setShowReflectionModal(false);
@@ -222,10 +233,22 @@ export default function HomePage() {
   }, []);
   const reflectionSwipe = useSwipeDown(closeReflectionModal, 80, () => (reflectionContentRef.current?.scrollTop ?? 0) === 0);
 
-  const today = new Date();
+  const [appDate, setAppDateState] = useState(getAppDate());
+  const today = appDate;
   const hijri = gregorianToHijri(today);
   const todayStr = today.toISOString().split('T')[0];
   const gregDay = today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  
+  // Refresh app date every minute
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const newDate = getAppDate();
+      if (newDate.toISOString().split('T')[0] !== appDate.toISOString().split('T')[0]) {
+        setAppDateState(newDate);
+      }
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [appDate]);
 
   // Fetch tafsir and audio for a verse key (defined before verse effect)
   const fetchTafsirAndAudio = useCallback(async (verseKey: string) => {
@@ -253,120 +276,80 @@ export default function HomePage() {
 
   // Audio play/pause toggle
   const handleAudioToggle = useCallback(() => {
-    if (!verseAudioUrl) return;
-    if (!audioRef.current) {
-      const audio = new Audio(verseAudioUrl);
-      audio.onended = () => setAudioPlaying(false);
-      audio.onpause = () => setAudioPlaying(false);
-      audio.onplay = () => { setAudioPlaying(true); setAudioLoading(false); };
-      audio.onwaiting = () => setAudioLoading(true);
-      audioRef.current = audio;
+    if (!verseAudioUrl || !audioRef) return;
+    
+    // Setup listeners if switching source or first time
+    if (audioRef.src !== verseAudioUrl) {
+      audioRef.src = verseAudioUrl;
+      audioRef.onended = () => setAudioPlaying(false);
+      audioRef.onpause = () => setAudioPlaying(false);
+      // Failsafes to stop spinner
+      audioRef.onplaying = () => { setAudioPlaying(true); setAudioLoading(false); };
+      audioRef.oncanplay = () => setAudioLoading(false);
+      audioRef.onwaiting = () => setAudioLoading(true);
+      audioRef.onerror = () => { setAudioLoading(false); setAudioPlaying(false); };
     }
+
     if (audioPlaying) {
-      audioRef.current.pause();
+      audioRef.pause();
     } else {
       setAudioLoading(true);
-      audioRef.current.play().catch(() => setAudioLoading(false));
+      audioRef.play().catch((err) => {
+        console.error("Audio playback interrupted:", err);
+        setAudioLoading(false);
+        setAudioPlaying(false);
+      });
     }
-  }, [verseAudioUrl, audioPlaying]);
+  }, [verseAudioUrl, audioPlaying, audioRef]);
 
   // Load verse of day from Quran Foundation API
-  useEffect(() => {
+  const loadVerse = useCallback(async () => {
+    if (authLoading) return;
     const key = getDailyVerseKey();
     const [chapter, ayah] = key.split(':');
+    
+    // 1. Load Verse (Cache-First)
     const cacheKey = `musfam_vod_${key}_${todayStr}`;
     const cached = sessionStorage.getItem(cacheKey);
     if (cached) {
       try {
-        setVerseOfDay(JSON.parse(cached));
+        const vData = JSON.parse(cached);
+        setVerseOfDay(vData);
         setVerseLoading(false);
-        fetchTafsirAndAudio(key); // also load tafsir+audio for cached verse
+        fetchTafsirAndAudio(key);
         return;
-      } catch {/* ignore */}
+      } catch { /* fail */ }
     }
-    Promise.all([
-      fetch(`/api/quran/verses?chapter=${chapter}&per_page=300`).then(r => r.ok ? r.json() : null),
-      fetch(`https://api.alquran.cloud/v1/surah/${chapter}`).then(r => r.ok ? r.json() : null),
-    ]).then(([data, surahData]) => {
-      const surahName = surahData?.data?.englishName || `Surah ${chapter}`;
-      if (data?.verses) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const v = data.verses.find((x: any) => x.verse_key === key);
+    
+    setVerseLoading(true);
+    try {
+      const [r1, r2] = await Promise.all([
+        fetch(`/api/quran/verses?chapter=${chapter}&per_page=300`).then(r => r.ok ? r.json() : null),
+        fetch(`https://api.alquran.cloud/v1/surah/${chapter}`).then(r => r.ok ? r.json() : null),
+      ]);
+      const surahName = r2?.data?.englishName || `Surah ${chapter}`;
+      if (r1?.verses) {
+        const v = r1.verses.find((x: any) => x.verse_key === key);
         if (v) {
-          const vod: VerseOfDay = { verse_key: key, text_arabic: v.text_uthmani || '', translation: v.translation || '', surah_name: surahName, ayah_number: ayah };
-          setVerseOfDay(vod);
-          sessionStorage.setItem(cacheKey, JSON.stringify(vod));
+          const vData = { verse_key: key, text_arabic: v.text_uthmani || '', translation: v.translation || '', surah_name: surahName, ayah_number: ayah };
+          setVerseOfDay(vData);
+          sessionStorage.setItem(cacheKey, JSON.stringify(vData));
           fetchTafsirAndAudio(key);
         }
       }
+    } finally {
       setVerseLoading(false);
-    }).catch(() => setVerseLoading(false));
-  }, [todayStr, fetchTafsirAndAudio]);
+    }
+  }, [authLoading, todayStr, fetchTafsirAndAudio]);
 
-  // Load hadith of day
-  useEffect(() => {
-    const cacheKey = `hadith_${todayStr}`;
-    const cached = sessionStorage.getItem(cacheKey);
-    if (cached) { try { setHadithOfDay(JSON.parse(cached)); return; } catch {/* ignore */} }
-    fetch('https://random-hadith-generator.vercel.app/bukhari/')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data?.data) {
-          const h = { narrator: data.data.header || 'Sahih al-Bukhari', text: data.data.hadith_english || '' };
-          if (h.text) { setHadithOfDay(h); sessionStorage.setItem(cacheKey, JSON.stringify(h)); }
-        }
-      }).catch(() => {});
-  }, [todayStr]);
+  // Load everything else (missions, points, stats)
+  const loadStats = useCallback(async () => {
+    if (!family || !user || authLoading) return;
+    try {
+      // 2. Load Missions & Rewards (Sequential to avoid Auth Lock)
+      const all = await getMissions(family.id);
+      const rewards_all = await getRewards(family.id);
 
-  // Load mission, points, khatam
-  useEffect(() => {
-    if (!family || !user) { setLoading(false); return; }
-    const verseKey = getDailyVerseKey();
-    Promise.all([
-      getDailyMission(family.id, todayStr, verseKey),
-      hasCompletedDailyMission(user.id, family.id, todayStr),
-      getFamilyPoints(family.id),
-    ]).then(([m, done, pts]) => {
-      setDailyMission(m);
-      setMissionCompleted(done);
-      setFamilyPoints(pts);
-      setLoading(false);
-    });
-
-    // Count unread messages
-    supabase.from('family_messages').select('id', { count: 'exact', head: true })
-      .eq('family_id', family.id)
-      .neq('user_id', user.id)
-      .then(({ count }) => setUnreadCount(count || 0));
-
-    // Khatam
-    supabase.from('khatam_sessions').select('id, status').eq('family_id', family.id).in('status', ['active', 'voting']).maybeSingle()
-      .then(({ data }) => {
-        if (data?.status === 'active') {
-          supabase.from('khatam_assignments').select('completed').eq('session_id', data.id)
-            .then(({ data: assigns }) => {
-              const done = (assigns || []).filter((a: { completed: boolean }) => a.completed).length;
-              setKhatamSession({ status: 'active', done });
-            });
-        } else if (data?.status === 'voting') {
-          setKhatamSession({ status: 'voting', done: 0 });
-        } else {
-          setKhatamSession(null);
-        }
-      });
-  }, [family, user, todayStr]);
-
-  // ── Load + live-sync missions, rewards, points ────────────────────────────
-  useEffect(() => {
-    if (!family || !user || !profile) return;
-
-    async function loadAll() {
-      const [all, rewards_all] = await Promise.all([
-        getMissions(family!.id),
-        getRewards(family!.id),
-      ]);
-
-      // Missions visible to this user
       const visible = profile!.role === 'parent'
         ? all
         : all.filter((m: Mission) =>
@@ -375,7 +358,6 @@ export default function HomePage() {
           );
       setCustomMissions(visible);
 
-      // Rewards visible to this user
       const visibleRewards = profile!.role === 'parent'
         ? rewards_all
         : rewards_all.filter((r: Reward) =>
@@ -384,63 +366,31 @@ export default function HomePage() {
           );
       setRewards(visibleRewards);
 
-      // Completion status
+      // 2. Points & Stats
+      const todayC = await getTodayCompletions(family.id);
       const completedSet = new Set<string>();
       const pendingSet = new Set<string>();
       const rejectedSet = new Set<string>();
 
-      if (profile!.role === 'parent') {
-        const todayC = await getTodayCompletions(family!.id);
-        const doneCustom = new Set<string>();
-        let isDailyDone = false;
-        todayC.forEach((c: any) => {
-          if (c.user_id === user!.id && c.status === 'approved') {
-            if (c.mission_id) doneCustom.add(c.mission_id);
-            if (c.daily_mission_id && dailyMission && c.daily_mission_id === dailyMission.id) isDailyDone = true;
+      todayC.forEach((c: any) => {
+        if (c.user_id === user!.id) {
+          const mId = c.mission_id || c.daily_mission_id;
+          if (mId) {
+            if (c.status === 'approved') { if (c.mission_id) completedSet.add(c.mission_id); }
+            else if (c.status === 'pending') { pendingSet.add(mId); }
+            else if (c.status === 'rejected') { rejectedSet.add(mId); }
           }
-        });
-        setCompletedCustomIds(doneCustom);
-        setMissionCompleted(isDailyDone);
-        const pending = await getPendingApprovals(family!.id);
-        setPendingApprovals(pending);
-      } else {
-        const todayC = await getTodayCompletions(family!.id);
-        const doneCustom = new Set<string>();
-        const pSet = new Set<string>();
-        const rSet = new Set<string>();
-        let isDailyDone = false;
+        }
+      });
+      setCompletedCustomIds(completedSet);
+      setPendingMissionIds(pendingSet);
+      setRejectedMissionIds(rejectedSet);
+      setTodayComps(todayC);
 
-        todayC.forEach((c: any) => {
-          // IMPORTANT: Only for THIS specific user
-          if (c.user_id === user!.id) {
-            const mId = c.mission_id || c.daily_mission_id;
-            if (!mId) return;
-
-            if (c.status === 'approved') {
-              if (c.mission_id) doneCustom.add(c.mission_id);
-              if (c.daily_mission_id && dailyMission && c.daily_mission_id === dailyMission.id) isDailyDone = true;
-            } else if (c.status === 'pending') {
-              pSet.add(mId);
-            } else if (c.status === 'rejected') {
-              rSet.add(mId);
-            }
-          }
-        });
-        setCompletedCustomIds(doneCustom);
-        setMissionCompleted(isDailyDone);
-        setPendingMissionIds(pSet);
-        setRejectedMissionIds(rSet);
-      }
-
-      // Points
-      const { data: ptsData } = await supabase
-        .from('points').select('user_id, total_points')
-        .eq('family_id', family!.id);
-      
+      const { data: ptsData } = await supabase.from('points').select('user_id, total_points').eq('family_id', family.id);
       let famSum = 0;
-      const ptsMap: Record<string, number> = {};
+      const ptsMap: { [key: string]: number } = {};
       if (ptsData) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ptsData.forEach((p: any) => { 
           const val = p.total_points || 0;
           ptsMap[p.user_id] = val; 
@@ -451,83 +401,181 @@ export default function HomePage() {
       setMyPoints(ptsMap[user!.id] || 0);
       setFamilyPoints(famSum);
 
-      // --- NEW: Also update Aura Board (Members) in real-time ---
-      const memberIds = Object.keys(ptsMap);
-      if (memberIds.length > 0) {
-        // We already have profile/familyMembers, but let's ensure we have names
-        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', memberIds);
-        const board = memberIds.map(mid => ({
-          id: mid,
-          name: profs?.find(p => p.id === mid)?.name || 'Member',
-          pts: ptsMap[mid],
-          isMe: mid === user!.id
-        })).sort((a, b) => b.pts - a.pts);
-        setFamilyAuraBoard(board);
+      // --- Aura Board (Members internal + Global Families) ---
+      // 1. Members (Internal)
+      // Atomic fetch of family members for names
+      const { data: qProfiles } = await supabase.from('profiles').select('id, name').eq('family_id', family.id);
+      const memberList = (ptsData || []).map(p => ({
+        id: p.user_id,
+        name: qProfiles?.find(fm => fm.id === p.user_id)?.name || 'Member',
+        pts: p.total_points,
+        isMe: p.user_id === user.id
+      })).sort((a,b) => b.pts - a.pts);
+      // Ensure I am in the list even if I have 0 pts
+      if (!memberList.some(m => m.id === user.id)) {
+        memberList.push({ id: user.id, name: profile?.name || 'You', pts: 0, isMe: true });
       }
+      setFamilyAuraBoard(memberList);
 
-      // --- NEW: Also update Family Leaderboard (Global) in real-time ---
+      // 2. Families (Global - for rekayasa)
       const { data: allPts } = await supabase.from('points').select('family_id, total_points');
-      if (allPts?.length) {
-        const totals: Record<string, number> = {};
-        allPts.forEach((p: any) => {
-          if (p.family_id) totals[p.family_id] = (totals[p.family_id] || 0) + p.total_points;
+      const famTotals = new Map<string, number>();
+      if (allPts) {
+        allPts.forEach(p => {
+          famTotals.set(p.family_id, (famTotals.get(p.family_id) ?? 0) + (p.total_points || 0));
         });
-        const familyIds = Object.keys(totals);
-        const { data: fams } = await supabase.from('families').select('id, name').in('id', familyIds);
-        const ranked = familyIds.map(fid => ({
-          family_id: fid,
-          family_name: fams?.find(f => f.id === fid)?.name || 'Family',
-          total_points: totals[fid],
-          rank: 0
-        })).sort((a, b) => b.total_points - a.total_points)
-           .map((f, i) => ({ ...f, rank: i + 1 }));
-        setFamilyBoardByFamily(ranked);
       }
+      // Ensure current family is there
+      if (!famTotals.has(family.id)) famTotals.set(family.id, famSum);
+
+      const { data: allFams } = await supabase.from('families').select('id, name');
+      const fNameMap = new Map<string, string>();
+      if (allFams) allFams.forEach(f => fNameMap.set(f.id, f.name));
+
+      const famBoard = [...famTotals.entries()].map(([fid, pts]) => ({
+        family_id: fid,
+        family_name: fNameMap.get(fid) || 'Family',
+        total_points: pts,
+        rank: 0
+      })).sort((a,b) => b.total_points - a.total_points);
+      
+      let r = 0, pP = -1;
+      const rankedFams = famBoard.map(f => {
+        if (f.total_points !== pP) { r++; pP = f.total_points; }
+        return { ...f, rank: r };
+      });
+      setFamilyBoardByFamily(rankedFams);
+
+      // 4. Pending Approvals (Guardian view)
+      if (profile && (profile.role === 'parent' || profile.role === 'guardian')) {
+         const pending = await getPendingApprovals(family.id);
+         setPendingApprovals(pending);
+      }
+      
+      // 5. Load Status (Unread & Khatam)
+      const { count } = await supabase.from('family_messages').select('id', { count: 'exact', head: true })
+        .eq('family_id', family.id)
+        .neq('user_id', user.id);
+      setUnreadCount(count || 0);
+
+      const { data: khatam } = await supabase.from('khatam_sessions').select('id, status').eq('family_id', family.id).in('status', ['active', 'voting']).maybeSingle();
+      if (khatam?.status === 'active') {
+        const { data: assigns } = await supabase.from('khatam_assignments').select('completed').eq('session_id', khatam.id);
+        const done = (assigns || []).filter((a: any) => a.completed).length;
+        setKhatamSession({ status: 'active', done });
+      } else if (khatam?.status === 'voting') {
+        setKhatamSession({ status: 'voting', done: 0 });
+      } else {
+        setKhatamSession(null);
+      }
+      
+    } catch (err) {
+      console.error("Dashboard Load failed:", err);
+    } finally {
+      setLoading(false);
     }
+  }, [family, user, profile, authLoading]);
 
-    loadAll();
+  // Sync Mission when Verse is ready
+  useEffect(() => {
+    if (!family || !user || !verseOfDay) return;
+    const vKey = getDailyVerseKey();
+    getDailyMission(family.id, todayStr, vKey, verseOfDay.translation, family.name).then(dm => {
+      if (dm) {
+        setDailyMission(dm);
+        hasCompletedDailyMission(user.id, family.id, todayStr).then(setMissionCompleted);
+      }
+    });
+  }, [family, user, todayStr, verseOfDay]);
 
-    // ── Supabase Realtime: subscribe to mission_completions ──
-    // Note: We remove the `filter: family_id=...` because Postgres UPDATE payloads
-    // don't include unmodified columns like family_id unless replica identity is full.
-    // Instead we rely on RLS to only send us our own events, and just trigger a full reload.
+  // Initial Sync
+  useEffect(() => {
+    loadVerse();
+    loadStats();
+  }, [loadVerse, loadStats]);
+
+  const ptr = usePullToRefresh(async () => {
+    setLoading(true);
+    await Promise.all([loadVerse(), loadStats()]);
+    setLoading(false);
+  });
+
+  // Load hadith of day (AI-Powered)
+  useEffect(() => {
+    if (!todayStr) return;
+    const cacheKey = `hadith_${todayStr}`;
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) { try { setHadithOfDay(JSON.parse(cached)); return; } catch {/* ignore */} }
+
+    const vK = getDailyVerseKey();
+    const prompt = `Generate a Sahih Hadith (narrator and brief English text) related to the theme of today's Verse (${vK}). Respond in ONLY valid JSON: { "narrator": "...", "text": "..." }`;
+    
+    fetch('/api/ai/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: prompt }] })
+    }).then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.response) {
+          try {
+            const start = data.response.indexOf('{');
+            const end = data.response.lastIndexOf('}');
+            const h = JSON.parse(data.response.substring(start, end + 1));
+            if (h.text) { 
+              setHadithOfDay(h); 
+              sessionStorage.setItem(cacheKey, JSON.stringify(h)); 
+            }
+          } catch (e) { /* fallback if AI JSON fails */ }
+        }
+      }).catch(() => {});
+  }, [todayStr]);
+
+  // --- Load + live-sync missions, rewards, points ---
+  useEffect(() => {
+    if (!family || !user || !profile) return;
+
+    loadStats();
+
     const channel = supabase
       .channel(`mission_completions_${family.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'mission_completions' },
-        () => { loadAll(); }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'mission_completions' }, () => { loadStats(); })
       .subscribe();
 
-    // ── Realtime: missions added/updated/deleted ──
     const missionsChannel = supabase
       .channel(`missions_${family.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'missions' },
-        () => { loadAll(); }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, () => { loadStats(); })
       .subscribe();
 
-    // ── Realtime: rewards added/updated/deleted ──
     const rewardsChannel = supabase
       .channel(`rewards_${family.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'rewards' },
-        () => { loadAll(); }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rewards' }, () => { loadStats(); })
       .subscribe();
 
-    // ── Realtime: points updated ──
     const pointsChannel = supabase
       .channel(`points_${family.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'points' },
-        () => { loadAll(); }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'points' }, () => { loadStats(); })
+      .subscribe();
+
+    // --- Debounced Realtime Sync ---
+    // We use a small ref to prevent 'jedag-jedug' (shaking) when multiple changes fire
+    let syncTimeout: NodeJS.Timeout;
+    const debouncedLoad = () => {
+      clearTimeout(syncTimeout);
+      syncTimeout = setTimeout(() => loadStats(), 300);
+    };
+
+    const changesChannel = supabase
+      .channel(`musfam_realtime_${family.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'mission_completions' }, (payload) => { 
+        // Anti-Jank: Skip refresh if WE are the ones who just submitted/updated
+        if ((payload.new as any)?.user_id === user.id) return;
+        debouncedLoad(); 
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'missions' }, (payload) => { 
+        if ((payload.new as any)?.created_by === user.id) return;
+        debouncedLoad(); 
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rewards' }, () => { debouncedLoad(); })
       .subscribe();
 
     return () => {
@@ -535,8 +583,10 @@ export default function HomePage() {
       supabase.removeChannel(missionsChannel);
       supabase.removeChannel(rewardsChannel);
       supabase.removeChannel(pointsChannel);
+      supabase.removeChannel(changesChannel);
+      clearTimeout(syncTimeout);
     };
-  }, [family, user, profile, todayStr]);
+  }, [family, user, profile, todayStr, dailyMission, loadStats]);
 
 
   // Load family members (for assignment)
@@ -546,70 +596,80 @@ export default function HomePage() {
       .then(({ data }) => { if (data) setFamilyMembers(data); });
   }, [family]);
 
-  // Board logic is now handled in loadAll() Realtime effect
-  useEffect(() => {
-    if (dashTab !== 'aura' || !family) return;
-    setAuraLoading(false); 
-  }, [dashTab, family]);
-
   async function handleCompleteMission() {
-    if (!user || !family || !dailyMission) return;
-    setMissionError('');
-    setSubmittingMission(true);
-    let finalProof = proofNote;
-    if (proofFile) {
-      setUploadingProof(true);
-      const url = await uploadProofImage(proofFile, user.id);
+    if (!user || !family || !dailyMission || !profile || submittingMission) return;
+    try {
+      setMissionError('');
+      setSubmittingMission(true);
+      let finalProofUrl = '';
+      if (proofFile) {
+        setUploadingProof(true);
+        const res = await uploadProofImage(user.id, proofFile);
+        setUploadingProof(false);
+        if (res.publicUrl) finalProofUrl = res.publicUrl;
+        else if (res.error) throw res.error;
+      }
+      
+      const { data: result } = await completeMission(user.id, family.id, dailyMission.id, todayStr, true, finalProofUrl, proofNote, 100, reflectionText, profile.role);
+      
+      if (result) {
+        setMissionCompleted(true);
+        setShowReflectionModal(false);
+        setReflectionText('');
+        setProofNote('');
+        setProofFile(null);
+      } else {
+        setMissionError('Submission failed. Please try again.');
+      }
+    } catch (err) {
+      console.error("Mission submission error:", err);
+      setMissionError('Cloud connectivity warning. Please try again.');
+    } finally {
+      setSubmittingMission(false);
       setUploadingProof(false);
-      if (url) finalProof = url;
     }
-    const finalReflection = finalProof.trim() ? `[Proof: ${finalProof.trim()}] ${reflectionText}` : reflectionText;
-    const result = await completeMission(user.id, family.id, dailyMission.id, finalReflection, profile?.name, profile?.role);
-    if (result) {
-      setMissionCompleted(true);
-      setShowReflectionModal(false);
-      setReflectionText('');
-      setProofNote('');
-      setProofFile(null);
-    } else {
-      setMissionError('Already completed today, or reflection is too short (min 10 characters).');
-    }
-    setSubmittingMission(false);
   }
 
   async function handleCompleteCustomMission() {
-    if (!user || !family || !profile || !reflectingCustomMission) return;
-    setMissionError('');
-    setSubmittingMission(true);
-    let finalProof = proofNote;
-    if (proofFile) {
-      setUploadingProof(true);
-      const url = await uploadProofImage(proofFile, user.id);
-      setUploadingProof(false);
-      if (url) finalProof = url;
-    }
-    const finalReflection = finalProof.trim() ? `[Proof: ${finalProof.trim()}] ${reflectionText}` : reflectionText;
-    const result = await completeCustomMission(user.id, family.id, reflectingCustomMission.id, finalReflection, profile.name, profile.role);
-    if (result) {
-      if (profile.role === 'child') {
-        setPendingMissionIds(prev => new Set([...prev, reflectingCustomMission.id]));
-        setRejectedMissionIds(prev => { const n = new Set(prev); n.delete(reflectingCustomMission.id); return n; });
-      } else {
-        setCompletedCustomIds(prev => new Set([...prev, reflectingCustomMission.id]));
-        const { data: pts } = await supabase.from('points').select('total_points').eq('user_id', user.id).eq('family_id', family.id).maybeSingle();
-        setMyPoints(pts?.total_points || 0);
+    if (!user || !family || !profile || !reflectingCustomMission || submittingMission) return;
+    try {
+      setMissionError('');
+      setSubmittingMission(true);
+      let finalProofUrl = '';
+      if (proofFile) {
+        setUploadingProof(true);
+        const res = await uploadProofImage(user.id, proofFile);
+        setUploadingProof(false);
+        if (res.publicUrl) finalProofUrl = res.publicUrl;
+        else if (res.error) throw res.error;
       }
-      setReflectingCustomMission(null);
-      setReflectionText('');
-      setProofNote('');
-      setProofFile(null);
-    } else {
-      setMissionError('Submission failed or reflection too short (min 10 chars).');
+      
+      const { data: result } = await completeMission(user.id, family.id, reflectingCustomMission.id, todayStr, false, finalProofUrl, proofNote, reflectingCustomMission.points || 10, reflectionText, profile.role);
+      
+      if (result) {
+        if (profile.role === 'child') {
+          setPendingMissionIds(prev => new Set([...prev, reflectingCustomMission.id]));
+          setRejectedMissionIds(prev => { const n = new Set(prev); n.delete(reflectingCustomMission.id); return n; });
+        } else {
+          setCompletedCustomIds(prev => new Set([...prev, reflectingCustomMission.id]));
+          setMyPoints(prev => prev + (reflectingCustomMission.points || 100));
+        }
+        setReflectingCustomMission(null);
+        setReflectionText('');
+        setProofNote('');
+        setProofFile(null);
+        setMissionError('');
+      } else {
+        setMissionError('Submission failed. Please try again.');
+      }
+    } catch (err) {
+      console.error("Custom mission error:", err);
+      setMissionError('Cloud connectivity warning. Please try again.');
+    } finally {
+      setSubmittingMission(false);
+      setUploadingProof(false);
     }
-    setSubmittingMission(false);
   }
-
-  if (loading) return <LoadingBlock fullScreen />;
 
   const greetingHour = today.getHours();
   const greeting = greetingHour < 12 ? 'Good morning' : greetingHour < 17 ? 'Good afternoon' : 'Good evening';
@@ -617,9 +677,41 @@ export default function HomePage() {
 
   return (
     <>
-      <main className="flex-1 overflow-y-auto hide-scrollbar pb-24 bg-[#F7F5F0]">
+      <main 
+        ref={ptr.containerRef}
+        onTouchStart={ptr.handleTouchStart}
+        onTouchMove={ptr.handleTouchMove}
+        onTouchEnd={ptr.handleTouchEnd}
+        className="flex-1 overflow-y-auto hide-scrollbar pb-24 page-enter relative"
+      >
+        {/* Pull-to-Refresh Indicator (Cooldown UI) */}
+        <div 
+          className="absolute left-0 right-0 flex flex-col items-center justify-center pointer-events-none transition-opacity duration-300 z-[60]"
+          style={{ 
+            height: '80px', 
+            top: '-80px',
+            transform: `translateY(${ptr.pullDistance}px)`,
+            opacity: ptr.pullDistance > 10 ? 1 : 0
+          }}
+        >
+          <div className={`w-10 h-10 rounded-full bg-white shadow-xl flex items-center justify-center border border-black/[0.05] ${ptr.refreshing ? 'animate-spin' : ''}`}>
+            {ptr.refreshing ? (
+               <Loader2 size={18} className="text-[#2d3a10]" />
+            ) : (
+               <div 
+                 className="w-3 h-3 rounded-full bg-[#c8a84b] transition-transform duration-300"
+                 style={{ transform: `scale(${Math.min(ptr.pullDistance / 80, 1.3)})` }}
+               />
+            )}
+          </div>
+          {ptr.pullDistance > 60 && (
+            <p className="text-[10px] font-bold text-[#c8a84b] mt-3 uppercase tracking-widest animate-pulse">
+              {ptr.refreshing ? 'Refreshing spirit...' : 'Pull for Cooldown'}
+            </p>
+          )}
+        </div>
 
-        {/* ─── Hero Header Card ─── */}
+        {/* --- Hero Header Card --- */}
         <div className="mx-4 mt-4">
           <div className="rounded-[20px] shadow-md batik-overlay relative"
             style={{ background: 'linear-gradient(145deg, #1a2508 0%, #2d3a10 50%, #3d4e18 100%)' }}>
@@ -637,21 +729,29 @@ export default function HomePage() {
                 </p>
               </div>
               {/* Right: Point Badge */}
-              <div className="flex flex-col items-end flex-shrink-0">
-                <div className="flex items-center gap-1.5 rounded-full px-4 py-2"
+              <div className="flex flex-col items-end flex-shrink-0 gap-2">
+                <div className="flex items-center gap-1.5 rounded-full px-3 py-1.5"
                   style={{ background: 'rgba(200,168,75,0.15)', border: '1px solid rgba(200,168,75,0.3)' }}>
-                  <Diamond size={14} style={{ color: '#c8a84b' }} />
-                  <span className="font-extrabold text-[15px] truncate" style={{ color: '#c8a84b' }}>
+                  <Diamond size={12} style={{ color: '#c8a84b' }} />
+                  <span className="font-extrabold text-xs truncate" style={{ color: '#c8a84b' }}>
                     {familyPoints.toLocaleString()} AP
                   </span>
+                  <span className="text-[8px] font-bold text-[#c8a84b]/60 uppercase ml-1">Family</span>
                 </div>
-                <p className="text-[9px] font-bold text-[#c8a84b]/60 uppercase tracking-widest mt-1 mr-1">Family Aura</p>
+                <div className="flex items-center gap-1.5 rounded-full px-3 py-1.5"
+                  style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}>
+                  <Star size={12} className="text-white/80" />
+                  <span className="font-extrabold text-xs text-white truncate">
+                    {myPoints.toLocaleString()} AP
+                  </span>
+                  <span className="text-[8px] font-bold text-white/40 uppercase ml-1">Personal</span>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* ─── Khatam Progress ─── */}
+        {/* --- Khatam Progress --- */}
         {khatamSession && (
           <div className="mx-4 mt-4">
             <Link href="/quran?tab=khatam">
@@ -671,7 +771,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* ─── Verse of the Day ─── */}
+        {/* --- Verse of the Day --- */}
         <div className="mx-4 mt-4">
           <p className="text-[10px] font-bold text-[#2d3a10]/50 uppercase tracking-widest mb-2">Verse of the Day</p>
           {verseLoading ? (
@@ -689,7 +789,11 @@ export default function HomePage() {
                     {verseOfDay.surah_name} {verseOfDay.verse_key}
                   </p>
                   <div className="flex items-center gap-2">
-                    {/* Audio play button — QF Audio API */}
+                    <Link href="/quran" className="flex items-center gap-1 text-white/40 hover:text-white/70 transition-colors">
+                      <span className="text-[10px] font-bold">Open</span>
+                      <ArrowUpRight size={12} />
+                    </Link>
+                    {/* Audio play button */}
                     {verseAudioUrl && (
                       <button
                         type="button"
@@ -706,10 +810,6 @@ export default function HomePage() {
                         }
                       </button>
                     )}
-                    <Link href="/quran" className="flex items-center gap-1 text-white/40 hover:text-white/70 transition-colors">
-                      <span className="text-[10px] font-bold">Open</span>
-                      <ArrowUpRight size={12} />
-                    </Link>
                   </div>
                 </div>
 
@@ -718,6 +818,27 @@ export default function HomePage() {
                   style={{ fontFamily: "'Amiri Quran', 'Amiri', serif" }}>
                   {verseOfDay.text_arabic}
                 </p>
+
+                {/* Audio Progress Bar */}
+                {verseAudioUrl && audioPlaying && (
+                  <div className="mb-4 px-1">
+                    <input
+                      type="range"
+                      min="0"
+                      max={audioDuration || 100}
+                      value={audioCurrentTime}
+                      onChange={(e) => {
+                        if (audioRef) audioRef.currentTime = Number(e.target.value);
+                      }}
+                      className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#c8a84b]"
+                    />
+                    <div className="flex justify-between text-[8px] text-white/40 font-bold mt-1">
+                      <span>{Math.floor(audioCurrentTime / 60)}:{(audioCurrentTime % 60).toFixed(0).padStart(2, '0')}</span>
+                      <span>{Math.floor(audioDuration / 60)}:{(audioDuration % 60).toFixed(0).padStart(2, '0')}</span>
+                    </div>
+                  </div>
+                )}
+
                 <div className="h-px bg-white/10 mb-3" />
 
                 {/* Translation */}
@@ -725,7 +846,7 @@ export default function HomePage() {
                   &ldquo;{verseOfDay.translation}&rdquo;
                 </p>
 
-                {/* Tafsir toggle — QF Tafsir API */}
+                {/* Tafsir toggle ΓÇö QF Tafsir API */}
                 {tafsirText && (
                   <div className="mt-3">
                     <button
@@ -745,6 +866,13 @@ export default function HomePage() {
                         <p className="text-[11px] leading-relaxed" style={{ color: 'rgba(245,240,232,0.75)' }}>
                           {tafsirText}
                         </p>
+                        <Link 
+                          href={`/quran?surah=${verseOfDay.verse_key.split(':')[0]}&ayah=${verseOfDay.verse_key.split(':')[1]}`}
+                          className="mt-2 inline-flex items-center gap-1 text-[10px] font-extrabold text-[#c8a84b] hover:underline"
+                        >
+                          Read more in Quran Page
+                          <ArrowUpRight size={10} />
+                        </Link>
                       </div>
                     )}
                   </div>
@@ -754,7 +882,7 @@ export default function HomePage() {
           ) : null}
         </div>
 
-        {/* ─── Dashboard: Missions + Aura Board ─── */}
+        {/* --- Dashboard: Missions + Aura Board --- */}
         <div className="mx-4 mt-4">
           <p className="text-[10px] font-bold text-[#2d3a10]/50 uppercase tracking-widest mb-2">Dashboard</p>
 
@@ -776,13 +904,21 @@ export default function HomePage() {
             </button>
           </div>
 
-          {/* ── MISSIONS TAB ── */}
+          {/* ΓöÇΓöÇ MISSIONS TAB ΓöÇΓöÇ */}
           {dashTab === 'missions' && (
             <div className="space-y-3">
               {/* Daily Quran Mission */}
-              {dailyMission && (
-                <div className="rounded-2xl overflow-hidden border border-black/[0.06] shadow-sm">
-                  <div className="px-4 py-3 batik-overlay" style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #3d4e18 100%)' }}>
+              {verseLoading || !dailyMission ? (
+                <div className="rounded-2xl overflow-hidden border border-black/[0.06] shadow-sm animate-pulse">
+                  <div className="px-4 py-8 bg-gray-100" />
+                  <div className="bg-white px-4 py-4 h-12" />
+                </div>
+              ) : (
+                <div className={`rounded-2xl overflow-hidden border border-black/[0.06] shadow-md transition-all duration-700 ${!missionCompleted ? 'ring-2 ring-[#c8a84b]/20 shadow-[0_0_20px_rgba(200,168,75,0.1)]' : ''}`}>
+                  <div className="px-4 py-3 batik-overlay relative" style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #3d4e18 100%)' }}>
+                    {!missionCompleted && (
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer pointer-events-none" />
+                    )}
                     <p className="text-white/60 text-[10px] font-bold uppercase tracking-widest mb-1">
                       Daily · {fmtVerseRef(dailyMission.verse_key)}
                     </p>
@@ -798,8 +934,8 @@ export default function HomePage() {
                       </div>
                     ) : (
                       <button type="button" onClick={() => setShowReflectionModal(true)}
-                        className="w-full py-2.5 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2"
-                        style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #5a6b28 100%)' }}>
+                        className="w-full py-2.5 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 active:scale-[0.97] transition-all shadow-md"
+                        style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #d4a017 100%)' }}>
                         <CheckCircle size={14} /> Complete + Reflect
                       </button>
                     )}
@@ -807,7 +943,7 @@ export default function HomePage() {
                 </div>
               )}
 
-              {/* ─ Parent: Pending Approvals Banner ─ */}
+              {/* ΓöÇ Parent: Pending Approvals Banner ΓöÇ */}
               {profile?.role === 'parent' && pendingApprovals.length > 0 && (
                 <div className="bg-white rounded-2xl border border-amber-200 shadow-sm overflow-hidden">
                   <div className="px-4 py-2.5 border-b border-amber-100 flex items-center gap-2" style={{ background: '#fffbeb' }}>
@@ -825,42 +961,44 @@ export default function HomePage() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-gray-800 truncate">
-                              {mission?.title || 'Mission'}
+                              {ap.daily_mission_id ? '🌅 Daily Mission Progress' : (mission?.title || 'Family Mission')}
                             </p>
-                            <p className="text-[10px] text-gray-500 mt-0.5">
-                              Submitted by <span className="font-bold text-amber-700">{ap.submitter_name || 'Child'}</span>
-                              {ap.reflection_text && ap.reflection_text !== 'Completed via dashboard' && (
-                                <span className="ml-1 text-gray-400">· &ldquo;{ap.reflection_text}&rdquo;</span>
-                              )}
-                            </p>
-                            <p className="text-[10px] text-[#2d3a10] font-bold mt-0.5">+{ap.points_earned} AP upon approval</p>
-                          </div>
+                            <div className="mt-1.5 space-y-1.5">
+                              {(() => {
+                                const proofMatch = ap.reflection_text?.match(/\[Proof: (https?:\/\/[^\]]+)\]/);
+                                const proofUrl = proofMatch ? proofMatch[1] : null;
+                                const cleanReflection = ap.reflection_text?.replace(/\[Proof: https?:\/\/[^\]]+\]\s*/, '') || '';
+                                
+                                return (
+                                  <>
+                                    {proofUrl && (
+                                      <div className="relative group w-20 h-20 rounded-xl overflow-hidden border border-amber-200 shadow-sm bg-gray-50 flex-shrink-0">
+                                        <img src={proofUrl} alt="Proof" className="w-full h-full object-cover" />
+                                        <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                                          <ImageIcon size={12} className="text-white" />
+                                        </div>
+                                      </div>
+                                    )}
+                                    {cleanReflection && cleanReflection !== 'Completed via dashboard' && (
+                                      <p className="text-[11px] font-medium leading-relaxed italic text-gray-500 bg-amber-50/50 rounded-lg px-2.5 py-1.5 border border-amber-100/30">
+                                        &ldquo;{cleanReflection}&rdquo;
+                                      </p>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                              </div>
+                              <p className="text-[10px] text-[#2d3a10] font-bold mt-0.5">+{ap.points_earned} AP upon approval</p>
+                            </div>
                           <div className="flex flex-col gap-1.5 flex-shrink-0">
                             <button type="button"
-                              disabled={approvingId === ap.id}
-                              onClick={async () => {
-                                if (!family) return;
-                                setApprovingId(ap.id);
-                                await approveCompletion(ap.id, ap.user_id, ap.family_id, ap.points_earned);
-                                setPendingApprovals(prev => prev.filter(p => p.id !== ap.id));
-                                setCompletedCustomIds(prev => new Set([...prev, ap.mission_id || '']));
-                                setApprovingId(null);
+                              onClick={() => {
+                                setReviewingApproval(ap);
+                                setParentFeedback('');
                               }}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-[11px] font-bold text-white transition-opacity disabled:opacity-50"
-                              style={{ background: '#2d3a10' }}>
-                              <ThumbsUp size={11} /> Approve
-                            </button>
-                            <button type="button"
-                              disabled={approvingId === ap.id}
-                              onClick={async () => {
-                                if (!family || !profile) return;
-                                setApprovingId(ap.id);
-                                await rejectCompletion(ap.id, ap.family_id, ap.submitter_name || 'Child', profile.name);
-                                setPendingApprovals(prev => prev.filter(p => p.id !== ap.id));
-                                setApprovingId(null);
-                              }}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 transition-opacity disabled:opacity-50">
-                              <ThumbsDown size={11} /> Reject
+                              className="flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-[11px] font-bold text-white transition-all active:scale-95 shadow-sm"
+                              style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #5a6b28 100%)' }}>
+                              Review Case
                             </button>
                           </div>
                         </div>
@@ -870,7 +1008,7 @@ export default function HomePage() {
                 </div>
               )}
 
-              {/* ─ Family Missions (classified: General + Personal) ─ */}
+              {/* --- Family Missions (classified: General + Personal) --- */}
               <div className="bg-white rounded-2xl border border-black/[0.06] shadow-sm overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -902,7 +1040,7 @@ export default function HomePage() {
                         const done = completedCustomIds.has(m.id);
                         const isPending = pendingMissionIds.has(m.id);
                         const isRejected = rejectedMissionIds.has(m.id);
-                        const catColor: Record<string, string> = { spiritual: '#3B82F6', health: '#22C55E', chores: '#F59E0B', education: '#84CC16' };
+                        const catColor: any /* Record<string, string> */ = { spiritual: '#3B82F6', health: '#22C55E', chores: '#F59E0B', education: '#84CC16' };
                         return (
                           <div key={m.id} className="flex items-center gap-3 px-4 py-3">
                             {(() => { const ic = resolveIcon(m.icon); return ic.type === 'image' ? (
@@ -925,7 +1063,7 @@ export default function HomePage() {
                             {done && <span className="flex items-center gap-1 text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full flex-shrink-0"><Check size={10} /> Done</span>}
                             {!done && isPending && (
                               <span className="flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full flex-shrink-0">
-                                <Clock size={10} /> Waiting
+                                <Clock size={10} /> Pending
                               </span>
                             )}
                             {!done && isRejected && (
@@ -995,7 +1133,7 @@ export default function HomePage() {
                 )}
               </div>
 
-              {/* ─ Rewards ─ */}
+              {/* Rewards */}
               <div className="bg-white rounded-2xl border border-black/[0.06] shadow-sm overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -1028,7 +1166,7 @@ export default function HomePage() {
                             ) : ic.type === 'emoji' ? (
                               <span className="text-xl flex-shrink-0 w-7 text-center">{ic.char}</span>
                             ) : (
-                              <span className="text-xl flex-shrink-0 w-7 text-center">🎁</span>
+                              <span className="text-xl flex-shrink-0 w-7 text-center">≡ƒÄü</span>
                             ); })()}
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-semibold text-gray-800 truncate">{r.name}</p>
@@ -1050,8 +1188,8 @@ export default function HomePage() {
                               <button type="button" onClick={async () => {
                                 if (!user || !family) return;
                                 const { claimReward } = await import('@/lib/store');
-                                const ok = await claimReward(user.id, family.id, r.id);
-                                if (ok) {
+                                const res = await claimReward(r.id, user.id, family.id, r.cost);
+                                if (res.success) {
                                   setRewards(prev => prev.map(rew => rew.id === r.id ? { ...rew, claimed: true } : rew));
                                   setMyPoints(p => Math.max(0, p - r.cost));
                                 }
@@ -1103,14 +1241,14 @@ export default function HomePage() {
               {/* Hadith inside missions tab */}
               {hadithOfDay && (
                 <div className="bg-white rounded-2xl border border-black/[0.06] shadow-sm px-4 py-3">
-                  <p className="text-[9px] font-bold text-[#2d3a10]/60 uppercase tracking-wider mb-1.5">📿 {hadithOfDay.narrator}</p>
+                  <p className="text-[9px] font-bold text-[#2d3a10]/60 uppercase tracking-wider mb-1.5">≡ƒô┐ {hadithOfDay.narrator}</p>
                   <p className="text-[11px] text-gray-600 italic leading-relaxed line-clamp-3">&ldquo;{hadithOfDay.text}&rdquo;</p>
                 </div>
               )}
             </div>
           )}
 
-          {/* ── AURA BOARD TAB ── */}
+          {/* ΓöÇΓöÇ AURA BOARD TAB ΓöÇΓöÇ */}
           {dashTab === 'aura' && (
             <div className="space-y-3">
               {/* Sub-tabs */}
@@ -1133,38 +1271,20 @@ export default function HomePage() {
                 </div>
               ) : auraSubTab === 'members' ? (
                 <div className="space-y-1.5">
-                  {(() => {
-                    const myIdx = familyAuraBoard.findIndex(m => m.isMe);
-                    if (myIdx === -1) return null;
-                    const m = familyAuraBoard[myIdx];
-                    return (
-                      <div className="rounded-2xl p-4 batik-overlay mb-2" style={{ background: 'linear-gradient(135deg, #1a2508 0%, #2d3a10 100%)' }}>
-                        <p className="text-white/50 text-[9px] font-bold uppercase tracking-widest">Your Ranking</p>
-                        <div className="flex items-end justify-between mt-1">
-                          <div>
-                            <p className="text-white font-extrabold text-lg leading-tight">{m.name}</p>
-                            <p className="text-white/50 text-[10px]">#{myIdx + 1} in family</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-yellow-300 font-extrabold text-2xl tabular-nums">{m.pts.toLocaleString()}</p>
-                            <p className="text-white/40 text-[9px]">Aura Points</p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
                   {familyAuraBoard.length === 0 ? (
                     <div className="bg-white rounded-2xl border border-black/[0.06] py-10 text-center">
                       <Trophy size={32} className="text-gray-200 mx-auto mb-2" />
                       <p className="text-sm text-gray-400">Complete missions to earn Aura Points!</p>
                     </div>
                   ) : familyAuraBoard.map((m, i) => (
-                    <div key={m.id} className={`rounded-xl px-4 py-2.5 border flex items-center gap-3 ${m.isMe ? 'border-[#2d3a10]/25 bg-[#2d3a10]/5' : 'bg-white border-black/[0.05]'}`}>
-                      <span className="w-7 text-center text-sm">
+                    <div key={m.id} className={`rounded-xl px-4 py-2.5 border flex items-center gap-3 ${m.isMe ? 'border-[#2d3a10] bg-[#2d3a10]/10 shadow-md ring-1 ring-[#2d3a10]/20' : 'bg-white border-black/[0.05]'}`}>
+                      <div className="w-7 text-center text-sm">
                         {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : <span className="font-extrabold text-gray-400">#{i+1}</span>}
-                      </span>
+                      </div>
                       <div className="flex-1 min-w-0">
-                        <p className={`font-bold text-sm ${m.isMe ? 'text-[#2d3a10]' : 'text-gray-800'}`}>{m.name}</p>
+                        <p className={`font-bold text-sm ${m.isMe ? 'text-[#2d3a10]' : 'text-gray-800'}`}>
+                          {m.name.replace(/≡ƒÑ[çêë]|≡ƒÑê/g, '').trim()}
+                        </p>
                         {m.isMe && <p className="text-[9px] text-[#2d3a10]/50 font-bold">You</p>}
                       </div>
                       <span className="font-extrabold text-sm text-gray-700 tabular-nums">{m.pts.toLocaleString()} AP</span>
@@ -1173,46 +1293,81 @@ export default function HomePage() {
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  {familyBoardByFamily.length === 0 ? (
-                    <div className="bg-white rounded-2xl border border-black/[0.06] py-10 text-center">
-                      <Trophy size={32} className="text-gray-200 mx-auto mb-2" />
-                      <p className="text-sm text-gray-400">No family rankings yet.</p>
-                    </div>
-                  ) : (() => {
-                    const top4 = familyBoardByFamily.slice(0, 4);
-                    const myFam = familyBoardByFamily.find(f => f.family_id === family?.id);
-                    const myFamInTop = top4.some(f => f.family_id === family?.id);
+                  {(() => {
+                    // --- COMPETITIVE GLOBAL RIVALRY (SEEDED) ---
+                    const rivalFamilies = [
+                      { family_id: 'demo-alfatih', family_name: 'Al-Fatih Family', total_points: 2500 },
+                      { family_id: 'demo-bilal',   family_name: 'Bilal Warriors',  total_points: 1800 },
+                      { family_id: 'demo-nurul',   family_name: 'Nurul Quran',     total_points: 1250 },
+                      { family_id: 'demo-barakah', family_name: 'Barakah Circle',  total_points: 920 },
+                    ];
+                    
+                    const myFamPoints = familyPoints || 0;
+                    
+                    // Combine rivals + real families from DB
+                    const combined = [...rivalFamilies.filter(rf => rf.family_id !== family?.id)];
+                    familyBoardByFamily.forEach(f => {
+                      if (!combined.some(c => c.family_id === f.family_id)) {
+                        combined.push({
+                          family_id: f.family_id,
+                          family_name: f.family_name,
+                          total_points: f.total_points,
+                          isMe: f.family_id === family?.id
+                        } as any);
+                      } else if (f.family_id === family?.id) {
+                         const idx = combined.findIndex(c => c.family_id === f.family_id);
+                         combined[idx].total_points = myFamPoints;
+                         (combined[idx] as any).isMe = true;
+                      }
+                    });
+
+                    if (!combined.some(c => (c as any).isMe)) {
+                      combined.push({ family_id: family?.id || 'me', family_name: family?.name || 'Your Family', total_points: myFamPoints, isMe: true } as any);
+                    }
+
+                    const ranked = combined.sort((a, b) => b.total_points - a.total_points).map((f, i) => ({ ...f, rank: i + 1 }));
+                    const top4 = ranked.slice(0, 4);
+                    const myEntry = ranked.find(f => (f as any).isMe);
+                    const myIndex = ranked.indexOf(myEntry!);
+                    const amInTop4 = myIndex < 4;
+                    const slot5 = amInTop4 ? (ranked.length > 4 ? ranked[4] : null) : myEntry;
+
                     return (
                       <>
                         {top4.map((f, i) => {
-                          const isOurs = f.family_id === family?.id;
+                          const isOurs = (f as any).isMe;
                           return (
-                            <div key={f.family_id} className={`rounded-xl px-4 py-2.5 border flex items-center gap-3 ${isOurs ? 'border-[#2d3a10]/25 bg-[#2d3a10]/5' : 'bg-white border-black/[0.05]'}`}>
+                            <div key={f.family_id} className={`rounded-xl px-4 py-2.5 border flex items-center gap-3 ${isOurs ? 'border-[#2d3a10] bg-[#2d3a10]/10 shadow-md ring-1 ring-[#2d3a10]/20' : 'bg-white border-black/[0.05]'}`}>
                               <span className="w-7 text-center text-sm">
-                                {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : <span className="font-extrabold text-gray-400">#{i+1}</span>}
+                                {f.rank === 1 ? '🥇' : f.rank === 2 ? '🥈' : f.rank === 3 ? '🥉' : <span className="font-extrabold text-gray-300">#{f.rank}</span>}
                               </span>
                               <div className="flex-1 min-w-0">
                                 <p className={`font-bold text-sm ${isOurs ? 'text-[#2d3a10]' : 'text-gray-800'}`}>{f.family_name}</p>
                                 {isOurs && <p className="text-[9px] text-[#2d3a10]/50 font-bold">Your Family</p>}
                               </div>
-                              <span className="font-extrabold text-sm text-gray-700 tabular-nums">{f.total_points.toLocaleString()} AP</span>
+                              <span className={`font-extrabold text-sm ${isOurs ? 'text-[#2d3a10]' : 'text-gray-700'} tabular-nums`}>{f.total_points.toLocaleString()} AP</span>
                             </div>
                           );
                         })}
-                        {!myFamInTop && myFam && (
+
+                        {slot5 && (
                           <>
-                            <div className="flex items-center gap-2 px-2 py-1">
-                              <div className="flex-1 h-px bg-gray-200" />
-                              <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">You</span>
-                              <div className="flex-1 h-px bg-gray-200" />
-                            </div>
-                            <div className="rounded-xl px-4 py-2.5 border border-[#2d3a10]/25 bg-[#2d3a10]/5 flex items-center gap-3">
-                              <span className="w-7 text-center font-extrabold text-gray-500 text-sm">#{myFam.rank}</span>
-                              <div className="flex-1 min-w-0">
-                                <p className="font-bold text-sm text-[#2d3a10]">{myFam.family_name}</p>
-                                <p className="text-[9px] text-[#2d3a10]/50 font-bold">Your Family</p>
+                            {!amInTop4 && (
+                              <div className="flex items-center gap-2 px-2 py-1">
+                                <div className="flex-1 h-px bg-gray-100" />
+                                <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">Global Rank</span>
+                                <div className="flex-1 h-px bg-gray-100" />
                               </div>
-                              <span className="font-extrabold text-sm text-gray-700 tabular-nums">{myFam.total_points.toLocaleString()} AP</span>
+                            )}
+                            <div className={`rounded-xl px-4 py-2.5 border flex items-center gap-3 ${(slot5 as any).isMe ? 'bg-[#2d3a10] text-white border-[#2d3a10] shadow-lg' : 'bg-white border-black/[0.05]'}`}>
+                              <span className={`w-7 text-center font-extrabold text-sm ${(slot5 as any).isMe ? 'text-white' : 'text-gray-400'}`}>
+                                #{slot5.rank}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <p className={`font-bold text-sm ${(slot5 as any).isMe ? 'text-white' : 'text-gray-800'}`}>{slot5.family_name}</p>
+                                {(slot5 as any).isMe && <p className="text-[9px] text-white/60 font-bold">Your Family</p>}
+                              </div>
+                              <span className={`font-extrabold text-sm ${(slot5 as any).isMe ? 'text-white' : 'text-gray-700'} tabular-nums`}>{slot5.total_points.toLocaleString()} AP</span>
                             </div>
                           </>
                         )}
@@ -1227,7 +1382,7 @@ export default function HomePage() {
 
       </main>
 
-      {/* ─── Reflection / Mission Complete Modal ─── */}
+      {/* --- Reflection / Mission Complete Modal --- */}
       {showReflectionModal && (
         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-end justify-center">
           <div
@@ -1286,7 +1441,7 @@ export default function HomePage() {
                     <input type="file" accept="image/*" className="sr-only" onChange={e => setProofFile(e.target.files?.[0] || null)} />
                   </label>
                 </div>
-                {proofFile && <p className="text-[10px] text-gray-400 mt-1">📎 {proofFile.name}</p>}
+                {proofFile && <p className="text-[10px] text-gray-400 mt-1">· {proofFile.name}</p>}
               </div>
             </div>
 
@@ -1305,7 +1460,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* ─── Custom Mission Reflection Modal ─── */}
+      {/* --- Custom Mission Reflection Modal --- */}
       {reflectingCustomMission && (
         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex justify-center items-end">
           <div 
@@ -1365,7 +1520,7 @@ export default function HomePage() {
                     <input type="file" accept="image/*" className="sr-only" onChange={e => setProofFile(e.target.files?.[0] || null)} />
                   </label>
                 </div>
-                {proofFile && <p className="text-[10px] text-gray-400 mt-1">📎 {proofFile.name}</p>}
+                {proofFile && <p className="text-[10px] text-gray-400 mt-1">· {proofFile.name}</p>}
               </div>
             </div>
 
@@ -1384,7 +1539,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* ─── Add Mission Modal ─── */}
+      {/* --- Add Mission Modal --- */}
       {showAddMission && (
         <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-end justify-center">
           <div className="bg-white rounded-t-3xl w-full max-w-md flex flex-col" style={{ maxHeight: '90vh' }}>
@@ -1403,7 +1558,7 @@ export default function HomePage() {
               <div>
                 <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Icon</p>
                 <div className="grid grid-cols-7 gap-2">
-                  {['📖', '🤲', '⭐', '🕌', '🌿', '💎', '🙏',
+                  {['📖', '🤲', '⭐', '🕌', '🍃', '💎', '🙏',
                     '🌟', '🏃', '🍎', '🏠', '🎓', '❤️', '✅'].map(em => (
                     <button key={em} type="button" onClick={() => setNewMissionIcon(em)}
                       className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl transition-all"
@@ -1420,7 +1575,7 @@ export default function HomePage() {
                   <span className="text-[10px] text-gray-400 font-medium">or type:</span>
                   <input value={newMissionIcon.startsWith('data:') ? '' : newMissionIcon}
                     onChange={e => setNewMissionIcon(e.target.value.slice(0, 2))}
-                    maxLength={2} placeholder="✏️" className="w-12 text-center text-lg border border-gray-200 rounded-xl py-1.5 focus:outline-none" />
+                    maxLength={2} placeholder="✍️" className="w-12 text-center text-lg border border-gray-200 rounded-xl py-1.5 focus:outline-none" />
                   <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#f3f4f0] border border-gray-200 text-[11px] font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 transition-colors">
                     <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
                     Upload
@@ -1513,16 +1668,17 @@ export default function HomePage() {
                   if (!user || !family || !profile) return;
                   setAddingMission(true);
                   const { addMission } = await import('@/lib/store');
-                  const added = await addMission(family.id, user.id, {
+                  const { data: added } = await addMission(family.id, {
                     title: newMissionTitle.trim(),
                     description: '',
                     category: newMissionCat,
                     icon: newMissionIcon || newMissionCat,
                     points: parseInt(newMissionPoints) || 100,
                     visible_to_child: newMissionVisible,
+                    created_by: user.id,
                     ...(newMissionClass === 'specific' && newMissionAssignTo ? { assigned_to: newMissionAssignTo } : {}),
                   });
-                  if (added) setCustomMissions(prev => [...prev, added]);
+                  if (added) setCustomMissions(prev => [...prev, added as Mission]);
                   setAddingMission(false);
                   setShowAddMission(false);
                 }}
@@ -1535,7 +1691,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* ─── Add Reward Modal ─── */}
+      {/* --- Add Reward Modal --- */}
       {showAddReward && (
         <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-end justify-center">
           <div className="bg-white rounded-t-3xl w-full max-w-md flex flex-col" style={{ maxHeight: '88vh' }}>
@@ -1555,7 +1711,7 @@ export default function HomePage() {
                 <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Icon</p>
                 <div className="grid grid-cols-7 gap-2">
                   {['🎁', '⭐', '🍕', '🎮', '📚', '🎨', '🧸',
-                    '🍦', '🎉', '🏆', '💝', '✨', '🎯', '🎪'].map(em => (
+                    '🍦', '🎈', '🏆', '🎀', '✨', '🎯', '🎟️'].map(em => (
                     <button key={em} type="button" onClick={() => setNewRewardIcon(em)}
                       className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl transition-all"
                       style={{
@@ -1570,7 +1726,7 @@ export default function HomePage() {
                   <span className="text-[10px] text-gray-400 font-medium">or type:</span>
                   <input value={newRewardIcon.startsWith('data:') ? '' : newRewardIcon}
                     onChange={e => setNewRewardIcon(e.target.value.slice(0, 2))}
-                    maxLength={2} placeholder="🎁" className="w-12 text-center text-lg border border-gray-200 rounded-xl py-1.5 focus:outline-none" />
+                    maxLength={2} placeholder="≡ƒÄü" className="w-12 text-center text-lg border border-gray-200 rounded-xl py-1.5 focus:outline-none" />
                   <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#f3f4f0] border border-gray-200 text-[11px] font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 transition-colors">
                     <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
                     Upload
@@ -1656,6 +1812,120 @@ export default function HomePage() {
           </div>
         </div>
       )}
+      {/* --- Guardian Review Modal (Approval/Rejection with Feedback) --- */}
+      {reviewingApproval && (
+        <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-[24px] w-full max-w-sm overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-200" style={{ maxHeight: '90vh' }}>
+            <div className="bg-[#2d3a10] px-5 py-3.5 batik-overlay flex items-center justify-between">
+              <div>
+                <h3 className="text-white font-extrabold text-base">Mission Review</h3>
+                <p className="text-white/60 text-[9px] uppercase font-bold tracking-widest mt-0.5">Decision Point</p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setReviewingApproval(null)}
+                className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="px-5 py-4 flex-1 overflow-y-auto space-y-4">
+              {/* Submission context */}
+              <div className="flex items-center gap-2.5 p-2.5 bg-gray-50/80 rounded-2xl border border-gray-100">
+                <div className="w-8 h-8 rounded-full bg-[#2d3a10]/10 flex items-center justify-center font-bold text-[#2d3a10] text-xs">
+                  {reviewingApproval.submitter_name?.[0]?.toUpperCase() || 'C'}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[9px] text-gray-400 font-bold uppercase truncate">By {reviewingApproval.submitter_name || 'Child'}</p>
+                  <p className="text-xs font-bold text-gray-800 truncate">+{reviewingApproval.points_earned} AP Reward</p>
+                </div>
+              </div>
+
+              {/* Proof View */}
+              <div className="space-y-3">
+                {reviewingApproval.proof_url && (
+                  <div className="rounded-xl overflow-hidden border border-gray-200 shadow-inner group relative">
+                    <img src={reviewingApproval.proof_url} alt="Review Proof" className="w-full aspect-video object-cover" />
+                  </div>
+                )}
+                
+                {reviewingApproval.reflection_text && reviewingApproval.reflection_text !== 'Completed via dashboard' && (
+                  <div className="bg-amber-50/70 rounded-xl p-3 border border-amber-100/50">
+                    <p className="text-[9px] text-amber-600 font-bold uppercase mb-1 flex items-center gap-1">
+                      Reflection
+                    </p>
+                    <p className="text-xs leading-relaxed text-gray-700 italic font-medium">
+                      &ldquo;{reviewingApproval.reflection_text}&rdquo;
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Feedback Input */}
+              <div className="space-y-1.5">
+                <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest pl-1 block">
+                  Guardian Message
+                </label>
+                <textarea
+                  value={parentFeedback}
+                  onChange={e => setParentFeedback(e.target.value)}
+                  placeholder="Words of encouragement..."
+                  rows={2}
+                  className="w-full rounded-xl border border-gray-100 bg-gray-50/30 p-3 text-sm focus:ring-2 focus:ring-[#2d3a10]/10 focus:border-[#2d3a10] outline-none resize-none transition-all placeholder:text-gray-300"
+                />
+              </div>
+            </div>
+
+            <div className="px-5 pb-6 pt-3 grid grid-cols-2 gap-3 border-t border-gray-50">
+              <button
+                type="button"
+                disabled={approvingId === reviewingApproval.id}
+                onClick={async () => {
+                  if (!family || !profile) return;
+                  setApprovingId(reviewingApproval.id);
+                  const res = await rejectCompletion(reviewingApproval.id, reviewingApproval.family_id, reviewingApproval.submitter_name || 'Child', profile.name, parentFeedback);
+                  if (res && !res.error) {
+                    setPendingApprovals(prev => prev.filter(p => p.id !== reviewingApproval.id));
+                    setReviewingApproval(null);
+                  } else {
+                    const errMsg = (res?.error as any)?.message || "Action failed";
+                    alert(errMsg);
+                  }
+                  setApprovingId(null);
+                }}
+                className="flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-extrabold text-red-600 border-2 border-red-50 hover:bg-red-50 transition-all active:scale-95 disabled:opacity-50"
+              >
+                {approvingId === reviewingApproval.id ? <Loader2 size={16} className="animate-spin" /> : <><ThumbsDown size={14} /> Reject</>}
+              </button>
+              
+              <button
+                type="button"
+                disabled={approvingId === reviewingApproval.id}
+                onClick={async () => {
+                  if (!family || !profile) return;
+                  setApprovingId(reviewingApproval.id);
+                  const res = await approveCompletion(reviewingApproval.id, reviewingApproval.user_id, reviewingApproval.family_id, reviewingApproval.points_earned, profile.name, parentFeedback);
+                  if (res && res.success) {
+                    setPendingApprovals(prev => prev.filter(p => p.id !== reviewingApproval.id));
+                    setCompletedCustomIds(prev => new Set([...prev, reviewingApproval.mission_id || '']));
+                    setReviewingApproval(null);
+                  } else {
+                    alert("Action failed");
+                    setReviewingApproval(null);
+                  }
+                  setApprovingId(null);
+                }}
+                className="flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-extrabold text-white shadow-lg transition-all active:scale-95 disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #5a6b28 100%)' }}
+              >
+                {approvingId === reviewingApproval.id ? <Loader2 size={16} className="animate-spin" /> : <><ThumbsUp size={14} /> Approve</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
+

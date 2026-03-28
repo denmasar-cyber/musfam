@@ -19,15 +19,10 @@ export default function LoginPage() {
 
     try {
       await signIn(email, password);
-      // Force a full page reload to pick up the new session
       window.location.href = '/';
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Login failed';
-      if (message.includes('Invalid login credentials')) {
-        setError('Incorrect email or password. Already registered?');
-      } else {
-        setError(message);
-      }
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -77,12 +72,15 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 rounded-xl bg-forest text-white font-bold text-sm hover:bg-forest-light transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            className="w-full py-4 rounded-2xl bg-forest text-white font-extrabold text-sm hover:bg-forest-light transition-all shadow-xl shadow-forest/20 flex items-center justify-center gap-2 active:scale-[0.98]"
           >
             <LogIn size={18} />
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? 'Entering Dashboard...' : 'Sign In'}
           </button>
         </form>
+
+        <div className="pt-4 text-center">
+        </div>
 
         <p className="text-center text-sm text-gray-500">
           Don&apos;t have an account?{' '}

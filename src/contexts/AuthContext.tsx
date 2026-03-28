@@ -33,28 +33,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [family, setFamily] = useState<Family | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function loadProfile(userId: string) {
-    const { data: profileData } = await supabase
+  async function loadProfile(userId: string, retries = 3) {
+    const { data: profileData, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
 
-    if (profileData) {
-      setProfile(profileData as Profile);
-
-      const { data: familyData } = await supabase
-        .from('families')
-        .select('*')
-        .eq('id', profileData.family_id)
-        .single();
-
-      if (familyData) {
-        setFamily(familyData as Family);
+    if (error || !profileData) {
+      if (retries > 0) {
+        await new Promise(r => setTimeout(r, 500));
+        return loadProfile(userId, retries - 1);
       }
-    } else {
       setProfile(null);
       setFamily(null);
+      setLoading(false);
+      return;
+    }
+
+    setProfile(profileData as Profile);
+
+    const { data: familyData } = await supabase
+      .from('families')
+      .select('*')
+      .eq('id', profileData.family_id)
+      .maybeSingle();
+
+    if (familyData) {
+      setFamily(familyData as Family);
     }
   }
 

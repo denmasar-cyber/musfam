@@ -5,16 +5,17 @@ import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { recordQuranRead } from '@/lib/store';
+import { syncBookmarkToFoundation, syncNoteToFoundation } from '@/lib/quran-foundation-sync';
 import LoadingBlock from '@/components/LoadingBlock';
 import {
   BookOpen, Search, Bookmark, BookmarkCheck, StickyNote,
   ChevronLeft, ChevronRight, Flame, X,
   Loader2, MessageSquare, ArrowLeft, List, Eye, EyeOff,
   Play, Pause, Volume2, VolumeX, SkipForward,
-  Users, Check, ThumbsUp,
+  Users, Check, ThumbsUp, Trash2,
 } from 'lucide-react';
 
-/* ─── Types ─────────────────────────────────────────────── */
+/* === Types === */
 interface Chapter {
   id: number;
   name_arabic: string;
@@ -81,7 +82,7 @@ interface KhatamAssignment {
   member_name?: string;
 }
 
-/* ─── Helpers ────────────────────────────────────────────── */
+/* === Helpers === */
 function toArabicNum(n: number): string {
   return String(n).split('').map(c => '٠١٢٣٤٥٦٧٨٩'[+c]).join('');
 }
@@ -104,7 +105,7 @@ function buildHtml(verse: Verse, activeWordIdx: number, isThisPlaying: boolean):
   return built.join('') + endMark;
 }
 
-/* ─── VerseCard (outside QuranPage to prevent remount on re-render) ── */
+/* === VerseCard === */
 interface VerseCardProps {
   verse: Verse;
   isBookmarked: boolean;
@@ -127,6 +128,7 @@ interface VerseCardProps {
   onNoteTextChange: (text: string) => void;
   onSaveNote: (verseKey: string) => void;
   onCancelNote: () => void;
+  onDeleteNote: (verseKey: string) => void;
   onToggleTafseer: (verseKey: string) => void;
   onVerseRead?: (verseKey: string) => void;
 }
@@ -136,7 +138,7 @@ const VerseCard = memo(function VerseCard({
   isThisPlaying, showTranslation,
   showTafseerFor, tafseerText, loadingTafseer, activeWordIdx, verseTimings, audioRef,
   onSelectVerse, onToggleBookmark, onToggleNote, onNoteTextChange,
-  onSaveNote, onCancelNote, onToggleTafseer, onVerseRead,
+  onSaveNote, onCancelNote, onDeleteNote, onToggleTafseer, onVerseRead,
 }: VerseCardProps) {
   const showTafseer = showTafseerFor === verse.verse_key;
   const cardRef = React.useRef<HTMLDivElement>(null);
@@ -255,7 +257,17 @@ const VerseCard = memo(function VerseCard({
           {/* Note display */}
           {hasNote && !isEditing && (
             <div className="bg-forest/5 rounded-xl p-3 border border-forest/15">
-              <p className="text-[10px] font-bold text-forest mb-1 uppercase tracking-wider">Your Note</p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[10px] font-bold text-forest uppercase tracking-wider">Your Note</p>
+                <button 
+                  type="button" 
+                  onClick={(e) => { e.stopPropagation(); onDeleteNote(verse.verse_key); }}
+                  className="text-gray-400 hover:text-red-500 transition-colors"
+                  title="Delete note"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
               <p className="text-sm text-gray-700 leading-relaxed">{noteContent}</p>
             </div>
           )}
@@ -324,7 +336,7 @@ function QuranLoadingBlock() {
   return <LoadingBlock />;
 }
 
-/* ─── Page ───────────────────────────────────────────────── */
+/* === Page === */
 export default function QuranPage() {
   const { user, family, profile } = useAuth();
   const searchParams = useSearchParams();
@@ -421,7 +433,7 @@ export default function QuranPage() {
     return () => clearTimeout(t);
   }, [verses, pendingScrollKey]);
 
-  /* ─── Data loading ───────────────────────────────────── */
+  /* === Data loading === */
   useEffect(() => {
     fetch('/api/quran/chapters')
       .then(r => r.ok ? r.json() : null)
@@ -580,7 +592,7 @@ export default function QuranPage() {
   useEffect(() => { if (selectedChapter) loadNotes(); }, [selectedChapter, loadNotes]);
   useEffect(() => { if (view === 'khatam') loadKhatam(); }, [view, loadKhatam]);
 
-  /* ─── Audio: load chapter ────────────────────────────── */
+  /* === Audio: load === */
   async function loadChapterAudio(chapterId: number) {
     setChapterAudioUrl(null);
     setVerseTimings(new Map());
@@ -727,7 +739,7 @@ export default function QuranPage() {
     stopTracking(); setIsPlaying(false); setPlayingVerseKey(null); setAudioProgress(0);
   }
 
-  /* ─── Navigation ─────────────────────────────────────── */
+  /* === Navigation === */
   async function openChapter(chapter: Chapter, targetVerseKey?: string) {
     setSelectedChapter(chapter); setSelectedJuz(null); setView('reading');
     setLoadingVerses(true); setVerses([]); setSelectedVerseKey(null);
@@ -801,9 +813,11 @@ export default function QuranPage() {
   async function toggleBookmark(verse: Verse) {
     if (!user || !family) return;
     if (bookmarks.has(verse.verse_key)) {
+      void syncBookmarkToFoundation(verse.verse_key, false);
       await supabase.from('quran_bookmarks').delete().eq('user_id', user.id).eq('verse_key', verse.verse_key);
       bookmarks.delete(verse.verse_key); setBookmarks(new Set(bookmarks));
     } else {
+      void syncBookmarkToFoundation(verse.verse_key, true);
       const [chap, vn] = verse.verse_key.split(':').map(Number);
       await supabase.from('quran_bookmarks').insert({
         user_id: user.id, family_id: family.id, verse_key: verse.verse_key,
@@ -821,9 +835,17 @@ export default function QuranPage() {
     if (!user || !family || !noteText.trim()) return;
     const [chap, vn] = verseKey.split(':').map(Number);
     const ex = notes.get(verseKey);
+    void syncNoteToFoundation(verseKey, true, noteText.trim());
     if (ex) await supabase.from('quran_notes').update({ note_text: noteText.trim(), updated_at: new Date().toISOString() }).eq('id', ex.id);
     else await supabase.from('quran_notes').insert({ user_id: user.id, family_id: family.id, verse_key: verseKey, chapter_number: chap, verse_number: vn, note_text: noteText.trim() });
     setEditingNoteVerse(null); setNoteText(''); loadNotes();
+  }
+
+  async function deleteNote(verseKey: string) {
+    if (!user) return;
+    void syncNoteToFoundation(verseKey, false);
+    await supabase.from('quran_notes').delete().eq('user_id', user.id).eq('verse_key', verseKey);
+    loadNotes();
   }
 
   /* ─── Search ─────────────────────────────────────────── */
@@ -1011,6 +1033,7 @@ export default function QuranPage() {
                     onNoteTextChange={setNoteText}
                     onSaveNote={saveNote}
                     onCancelNote={handleCancelNote}
+                    onDeleteNote={deleteNote}
                     onToggleTafseer={toggleTafseer}
                     onVerseRead={handleVerseRead}
                   />

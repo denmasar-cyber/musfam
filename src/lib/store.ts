@@ -1,838 +1,251 @@
 import { supabase } from './supabase';
-import { Mission, MissionCompletion, Reflection, ActivityEntry, Reward } from './types';
-import { generateDailyMission } from './missionGenerator';
+import { Mission, MissionCompletion, Reflection, ActivityEntry, Reward, Profile, DailyMission } from './types';
+import { generateDailyMissionSemantic } from './missionGenerator';
+import { 
+  syncGoalToFoundation, syncActivityToFoundation, 
+  syncPostToFoundation, syncCommentToFoundation,
+  syncGoalProgressToFoundation
+} from './quran-foundation-sync';
 
-export interface DailyMission {
-  id: string;
-  family_id: string;
-  date: string;
+export interface VerseOfDay {
   verse_key: string;
-  generated_text: string;
-  parent_override_text: string | null;
-  parent_override_prompt: string | null;
-  is_parent_override: boolean;
-  created_at: string;
+  text_arabic: string;
+  translation: string;
+  surah_name?: string;
+  ayah_number?: string;
 }
 
-export interface ScheduleEvent {
-  id: string;
-  family_id: string;
-  user_id: string;
-  date: string;
-  title: string;
-  time: string | null;
-  created_at: string;
-}
+// 🛡️ MUSFAM STORE: THE ABSOLUTE TRUTH (HIGH-LEVEL CLAUDE EDITION)
+// Stable, Fast, Deterministic, and Built for Family Spiritual Growth.
 
-// ============================================
-// MISSIONS
-// ============================================
-
-export async function getMissions(familyId: string): Promise<Mission[]> {
-  const { data, error } = await supabase
-    .from('missions')
-    .select('*')
-    .eq('family_id', familyId)
-    .order('created_at', { ascending: true });
-
-  if (error) return [];
-  return data as Mission[];
-}
-
-export async function addMission(
-  familyId: string,
-  userId: string,
-  mission: { title: string; description: string; category: Mission['category']; icon: string; assigned_to?: string; points?: number; is_special?: boolean; visible_to_child?: boolean }
-): Promise<Mission | null> {
-  const { data, error } = await supabase
-    .from('missions')
-    .insert({
-      family_id: familyId,
-      title: mission.title,
-      description: mission.description,
-      category: mission.category,
-      icon: mission.icon,
-      created_by: userId,
-      is_default: false,
-      points: mission.points ?? 100,
-      is_special: mission.is_special ?? false,
-      visible_to_child: mission.visible_to_child ?? true,
-      ...(mission.assigned_to ? { assigned_to: mission.assigned_to } : {}),
-    })
-    .select()
-    .single();
-
-  if (error) return null;
-  return data as Mission;
-}
-
-export async function deleteMission(missionId: string): Promise<void> {
-  await supabase.from('missions').delete().eq('id', missionId);
-}
-
-export async function updateMission(
-  missionId: string,
-  updates: { title?: string; category?: Mission['category']; points?: number; is_special?: boolean; visible_to_child?: boolean }
-): Promise<void> {
-  const patch: Record<string, unknown> = {};
-  if (updates.title !== undefined) patch.title = updates.title;
-  if (updates.category !== undefined) {
-    patch.category = updates.category;
-    patch.icon = updates.category === 'spiritual' ? 'sparkles' : updates.category === 'health' ? 'activity' : updates.category === 'chores' ? 'home' : 'book-open';
-  }
-  if (updates.points !== undefined) patch.points = updates.points;
-  if (updates.is_special !== undefined) patch.is_special = updates.is_special;
-  if (updates.visible_to_child !== undefined) patch.visible_to_child = updates.visible_to_child;
-  await supabase.from('missions').update(patch).eq('id', missionId);
-}
-
-// ============================================
-// COMPLETIONS
-// ============================================
-
-export async function getCompletions(familyId: string): Promise<MissionCompletion[]> {
-  const { data, error } = await supabase
-    .from('mission_completions')
-    .select('*')
-    .eq('family_id', familyId)
-    .order('completed_at', { ascending: false });
-
-  if (error) return [];
-  return data as MissionCompletion[];
-}
-
-export async function getTodayCompletions(familyId: string): Promise<MissionCompletion[]> {
-  const today = new Date().toISOString().split('T')[0];
-  const { data, error } = await supabase
-    .from('mission_completions')
-    .select('*')
-    .eq('family_id', familyId)
-    .gte('completed_at', `${today}T00:00:00`)
-    .lt('completed_at', `${today}T23:59:59.999`);
-
-  if (error) return [];
-  return data as MissionCompletion[];
-}
-
-export async function isMissionCompletedToday(familyId: string, missionId: string): Promise<boolean> {
-  const completions = await getTodayCompletions(familyId);
-  return completions.some(c => c.mission_id === missionId);
-}
-
-export async function completeMission(
-  userId: string,
-  familyId: string,
-  dailyMissionId: string,
-  reflectionText: string,
-  submitterName?: string,
-  submitterRole?: string
-): Promise<MissionCompletion | null> {
-  // Anti-exploit: 1 completion per user per day
-  const today = new Date().toISOString().split('T')[0];
-  const alreadyDone = await hasCompletedDailyMission(userId, familyId, today);
-  if (alreadyDone) return null;
-
-  const points = 100;
-  const isChild = submitterRole === 'child';
-  const status = isChild ? 'pending' : 'approved';
-
-  // Build insert payload — omit approval columns if DB doesn't have them yet
-  const insertPayload: Record<string, unknown> = {
+export async function getDailyMission(familyId: string, _date: string, _verseKey: string, verseText?: string, familyName?: string): Promise<DailyMission | null> {
+  const { data: existing } = await supabase.from('daily_missions').select('*').eq('family_id', familyId).eq('date', _date).maybeSingle();
+  const isPlaceholder = existing && (existing.generated_text || '').includes('🛡️ GENERATING');
+  if (existing && !isPlaceholder) return existing as DailyMission;
+  const { missionText, reflectionPrompt, verseKey } = await generateDailyMissionSemantic(new Date(_date), verseText, _verseKey, familyName);
+  const { data: created, error } = await supabase.from('daily_missions').upsert({
+    id: existing?.id,
     family_id: familyId,
-    user_id: userId,
-    mission_id: null,
-    daily_mission_id: dailyMissionId,
-    reflection_text: reflectionText,
-    points_earned: points,
-  };
-  // Try to include approval columns (safe: Supabase ignores unknown columns gracefully in upsert,
-  // but INSERT will fail on unknown column. We include them and let DB migrations handle it.)
-  insertPayload.status = status;
-  if (submitterName) insertPayload.submitter_name = submitterName;
-
-  const { data: completion, error } = await supabase
-    .from('mission_completions')
-    .insert(insertPayload)
-    .select()
-    .single();
-
-  if (error) {
-    // Retry without approval columns (migration not run yet)
-    const { data: c2, error: e2 } = await supabase
-      .from('mission_completions')
-      .insert({
-        family_id: familyId,
-        user_id: userId,
-        mission_id: null,
-        daily_mission_id: dailyMissionId,
-        reflection_text: reflectionText,
-        points_earned: points,
-      })
-      .select()
-      .single();
-    if (e2) return null;
-    return c2 as MissionCompletion;
-  }
-
-  return completion as MissionCompletion;
-}
-
-export async function completeCustomMission(
-  userId: string,
-  familyId: string,
-  missionId: string,
-  reflectionText: string,
-  submitterName?: string,
-  submitterRole?: string
-): Promise<MissionCompletion | null> {
-  const today = new Date().toISOString().split('T')[0];
-  // Check if already approved or pending — block resubmission
-  const { data: existing } = await supabase
-    .from('mission_completions')
-    .select('id, status')
-    .eq('family_id', familyId)
-    .eq('user_id', userId)
-    .eq('mission_id', missionId)
-    .gte('completed_at', `${today}T00:00:00`)
-    .limit(1)
-    .maybeSingle();
-  if (existing?.status === 'approved' || existing?.status === 'pending') return null;
-  // If rejected, delete it so child can resubmit
-  if (existing?.status === 'rejected') {
-    await supabase.from('mission_completions').delete().eq('id', existing.id);
-  }
-
-  // Fetch mission points dynamically
-  const { data: missionData } = await supabase.from('missions').select('points').eq('id', missionId).single();
-  const points = missionData?.points ?? 100;
-
-  const isChild = submitterRole === 'child';
-  const status = isChild ? 'pending' : 'approved';
-
-  const insertPayload: Record<string, unknown> = {
-    family_id: familyId,
-    user_id: userId,
-    mission_id: missionId,
-    reflection_text: reflectionText,
-    points_earned: points,
-    status,
-  };
-  if (submitterName) insertPayload.submitter_name = submitterName;
-
-  const { data: completion, error } = await supabase
-    .from('mission_completions')
-    .insert(insertPayload)
-    .select()
-    .single();
-
-  if (error) {
-    // Retry without approval columns
-    const { data: c2, error: e2 } = await supabase
-      .from('mission_completions')
-      .insert({
-        family_id: familyId,
-        user_id: userId,
-        mission_id: missionId,
-        reflection_text: reflectionText,
-        points_earned: points,
-      })
-      .select()
-      .single();
-    if (e2) return null;
-    await addPoints(userId, familyId, points);
-    await updateStreak(userId, familyId);
-    const missions2 = await getMissions(familyId);
-    const m2 = missions2.find(m => m.id === missionId);
-    await addActivity(userId, familyId, {
-      description: m2?.title || 'Mission completed',
-      points_change: points,
-      icon: 'check-circle',
-    });
-    return c2 as MissionCompletion;
-  }
-
-  if (!isChild) {
-    await addPoints(userId, familyId, points);
-    await updateStreak(userId, familyId);
-
-    const missions = await getMissions(familyId);
-    const mission = missions.find(m => m.id === missionId);
-    await addActivity(userId, familyId, {
-      description: mission?.title || 'Mission completed',
-      points_change: points,
-      icon: 'check-circle',
-    });
-  }
-
-  return completion as MissionCompletion;
-}
-
-// ============================================
-// MISSION APPROVAL (parent review workflow)
-// ============================================
-
-export interface PendingApproval {
-  id: string;
-  family_id: string;
-  user_id: string;
-  submitter_name: string | null;
-  mission_id: string | null;
-  daily_mission_id: string | null;
-  reflection_text: string | null;
-  proof_url: string | null;
-  points_earned: number;
-  completed_at: string;
-  status: 'pending' | 'approved' | 'rejected';
-}
-
-export async function getRejectedCompletions(userId: string, familyId: string): Promise<PendingApproval[]> {
-  const today = new Date().toISOString().split('T')[0];
-  const { data, error } = await supabase
-    .from('mission_completions')
-    .select('*')
-    .eq('family_id', familyId)
-    .eq('user_id', userId)
-    .eq('status', 'rejected')
-    .gte('completed_at', `${today}T00:00:00`)
-    .order('completed_at', { ascending: false });
-  if (error) return [];
-  return data as PendingApproval[];
-}
-
-export async function getPendingApprovals(familyId: string): Promise<PendingApproval[]> {
-  const { data, error } = await supabase
-    .from('mission_completions')
-    .select('*')
-    .eq('family_id', familyId)
-    .eq('status', 'pending')
-    .order('completed_at', { ascending: false });
-  if (error) return [];
-  return data as PendingApproval[];
-}
-
-export async function approveCompletion(
-  completionId: string,
-  userId: string,
-  familyId: string,
-  points: number
-): Promise<void> {
-  await supabase
-    .from('mission_completions')
-    .update({ status: 'approved' })
-    .eq('id', completionId);
-
-  await updateStreak(userId, familyId);
-}
-
-export async function rejectCompletion(
-  completionId: string,
-  familyId: string,
-  submitterName: string,
-  parentName: string
-): Promise<void> {
-  await supabase
-    .from('mission_completions')
-    .update({ status: 'rejected' })
-    .eq('id', completionId);
-
-  // Post a system notification in the family chat
-  await supabase.from('family_messages').insert({
-    family_id: familyId,
-    user_id: '00000000-0000-0000-0000-000000000000',
-    sender_name: 'System',
-    sender_role: 'parent',
-    content: `❌ ${submitterName}'s mission submission was not approved by ${parentName}. Please try again with a more detailed reflection.`,
-  });
-}
-
-// ============================================
-// REFLECTIONS
-// ============================================
-
-export async function getReflections(familyId: string): Promise<Reflection[]> {
-  const { data, error } = await supabase
-    .from('reflections')
-    .select('*')
-    .eq('family_id', familyId)
-    .order('created_at', { ascending: false });
-
-  if (error) return [];
-  return data as Reflection[];
-}
-
-export async function addReflection(
-  familyId: string,
-  reflection: Omit<Reflection, 'id' | 'created_at' | 'family_id'>
-): Promise<Reflection | null> {
-  const { data, error } = await supabase
-    .from('reflections')
-    .insert({ ...reflection, family_id: familyId })
-    .select()
-    .single();
-
-  if (error) return null;
-  return data as Reflection;
-}
-
-// ============================================
-// POINTS
-// ============================================
-
-export async function getPoints(userId: string, familyId: string): Promise<number> {
-  const { data, error } = await supabase
-    .from('points')
-    .select('total_points')
-    .eq('user_id', userId)
-    .eq('family_id', familyId)
-    .single();
-
-  if (error || !data) return 0;
-  return data.total_points;
-}
-
-export async function getFamilyPoints(familyId: string): Promise<number> {
-  const { data, error } = await supabase
-    .from('points')
-    .select('total_points')
-    .eq('family_id', familyId);
-
-  if (error || !data) return 0;
-  return data.reduce((sum, p) => sum + p.total_points, 0);
-}
-
-export async function addPoints(userId: string, familyId: string, amount: number): Promise<void> {
-  const current = await getPoints(userId, familyId);
-  await supabase
-    .from('points')
-    .upsert({
-      user_id: userId,
-      family_id: familyId,
-      total_points: current + amount,
-      updated_at: new Date().toISOString(),
-    });
-}
-
-export async function spendPoints(userId: string, familyId: string, amount: number): Promise<boolean> {
-  const current = await getPoints(userId, familyId);
-  if (current < amount) return false;
-
-  await supabase
-    .from('points')
-    .update({
-      total_points: current - amount,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('user_id', userId)
-    .eq('family_id', familyId);
-
-  return true;
-}
-
-// ============================================
-// STREAKS
-// ============================================
-
-export async function getStreak(userId: string, familyId: string): Promise<{ current_streak: number; longest_streak: number }> {
-  const { data, error } = await supabase
-    .from('streaks')
-    .select('current_streak, longest_streak')
-    .eq('user_id', userId)
-    .eq('family_id', familyId)
-    .single();
-
-  if (error || !data) return { current_streak: 0, longest_streak: 0 };
-  return data;
-}
-
-export async function updateStreak(userId: string, familyId: string): Promise<void> {
-  const today = new Date().toISOString().split('T')[0];
-
-  const { data: existing } = await supabase
-    .from('streaks')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('family_id', familyId)
-    .single();
-
-  if (!existing) {
-    await supabase.from('streaks').insert({
-      user_id: userId,
-      family_id: familyId,
-      current_streak: 1,
-      longest_streak: 1,
-      last_active_date: today,
-    });
-    return;
-  }
-
-  if (existing.last_active_date === today) return;
-
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayKey = yesterday.toISOString().split('T')[0];
-
-  let newCurrent = 1;
-  if (existing.last_active_date === yesterdayKey) {
-    newCurrent = existing.current_streak + 1;
-  }
-
-  const newLongest = Math.max(existing.longest_streak, newCurrent);
-
-  await supabase
-    .from('streaks')
-    .update({
-      current_streak: newCurrent,
-      longest_streak: newLongest,
-      last_active_date: today,
-    })
-    .eq('user_id', userId)
-    .eq('family_id', familyId);
-}
-
-// ============================================
-// ACTIVITIES
-// ============================================
-
-export async function getActivities(familyId: string): Promise<ActivityEntry[]> {
-  const { data, error } = await supabase
-    .from('activity_log')
-    .select('*')
-    .eq('family_id', familyId)
-    .order('created_at', { ascending: false })
-    .limit(50);
-
-  if (error) return [];
-  return data as ActivityEntry[];
-}
-
-export async function addActivity(
-  userId: string,
-  familyId: string,
-  entry: { description: string; points_change: number; icon: string }
-): Promise<void> {
-  await supabase.from('activity_log').insert({
-    family_id: familyId,
-    user_id: userId,
-    description: entry.description,
-    points_change: entry.points_change,
-    icon: entry.icon,
-  });
-}
-
-export async function deleteActivity(activityId: string): Promise<void> {
-  await supabase.from('activity_log').delete().eq('id', activityId);
-}
-
-export async function clearAllActivities(familyId: string): Promise<void> {
-  await supabase.from('activity_log').delete().eq('family_id', familyId);
-}
-
-// ============================================
-// REWARDS
-// ============================================
-
-export async function getRewards(familyId: string): Promise<Reward[]> {
-  const { data, error } = await supabase
-    .from('rewards')
-    .select('*')
-    .eq('family_id', familyId)
-    .order('cost', { ascending: true });
-
-  if (error) return [];
-  return data as Reward[];
-}
-
-export async function updateReward(rewardId: string, updates: { is_special?: boolean; visible_to_child?: boolean; name?: string; cost?: number }): Promise<boolean> {
-  const { error } = await supabase.from('rewards').update(updates).eq('id', rewardId);
-  return !error;
-}
-
-export async function addReward(familyId: string, reward: { name: string; cost: number; icon: string; assigned_to?: string; is_special?: boolean; visible_to_child?: boolean }): Promise<boolean> {
-  const { error } = await supabase.from('rewards').insert({
-    family_id: familyId,
-    name: reward.name,
-    cost: reward.cost,
-    icon: reward.icon,
-    claimed: false,
-    is_special: reward.is_special ?? false,
-    visible_to_child: reward.visible_to_child ?? true,
-    ...(reward.assigned_to ? { assigned_to: reward.assigned_to } : {}),
-  });
-  return !error;
-}
-
-export async function deleteReward(rewardId: string): Promise<boolean> {
-  const { error } = await supabase.from('rewards').delete().eq('id', rewardId);
-  return !error;
-}
-
-export async function claimReward(userId: string, familyId: string, rewardId: string): Promise<boolean> {
-  const rewards = await getRewards(familyId);
-  const reward = rewards.find(r => r.id === rewardId);
-  if (!reward || reward.claimed) return false;
-
-  // Insufficient points check
-  const { data: userData } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', familyId).maybeSingle();
-  if (!userData || userData.total_points < reward.cost) return false;
-
-  await supabase
-    .from('rewards')
-    .update({
-      claimed: true,
-      claimed_at: new Date().toISOString(),
-      claimed_by: userId,
-    })
-    .eq('id', rewardId);
-
-  return true;
-}
-
-// ============================================
-// HYDRATION
-// ============================================
-
-export async function getHydration(userId: string, familyId: string): Promise<number> {
-  const today = new Date().toISOString().split('T')[0];
-  const { data, error } = await supabase
-    .from('hydration')
-    .select('count')
-    .eq('user_id', userId)
-    .eq('family_id', familyId)
-    .eq('date', today)
-    .single();
-
-  if (error || !data) return 0;
-  return data.count;
-}
-
-export async function incrementHydration(userId: string, familyId: string): Promise<number> {
-  const today = new Date().toISOString().split('T')[0];
-  const current = await getHydration(userId, familyId);
-  const next = Math.min(current + 1, 8);
-
-  const { data: existing } = await supabase
-    .from('hydration')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('date', today)
-    .single();
-
-  if (existing) {
-    await supabase
-      .from('hydration')
-      .update({ count: next })
-      .eq('id', existing.id);
-  } else {
-    await supabase.from('hydration').insert({
-      user_id: userId,
-      family_id: familyId,
-      date: today,
-      count: next,
-    });
-  }
-
-  return next;
-}
-
-// ============================================
-// QURAN PROGRESS (family-scoped)
-// ============================================
-
-export async function getQuranProgress(familyId: string): Promise<number> {
-  const { data, error } = await supabase
-    .from('quran_progress')
-    .select('pages_read')
-    .eq('family_id', familyId)
-    .single();
-
-  if (error || !data) return 0;
-  return data.pages_read;
-}
-
-export async function incrementQuranProgress(familyId: string): Promise<number> {
-  const current = await getQuranProgress(familyId);
-  const next = current + 1;
-
-  await supabase
-    .from('quran_progress')
-    .update({
-      pages_read: next,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('family_id', familyId);
-
-  return next;
-}
-
-// ============================================
-// DAILY MISSIONS
-// ============================================
-
-export async function getDailyMission(familyId: string, date: string, verseKey: string): Promise<DailyMission | null> {
-  // Try to fetch existing
-  const { data: existing } = await supabase
-    .from('daily_missions')
-    .select('*')
-    .eq('family_id', familyId)
-    .eq('date', date)
-    .single();
-
-  if (existing) return existing as DailyMission;
-
-  // Generate and insert
-  const { missionText, reflectionPrompt } = generateDailyMission(verseKey);
-
-  const { data: inserted, error } = await supabase
-    .from('daily_missions')
-    .insert({
-      family_id: familyId,
-      date,
-      verse_key: verseKey,
-      generated_text: missionText,
-      parent_override_prompt: reflectionPrompt,
-      is_parent_override: false,
-    })
-    .select()
-    .single();
-
-  if (error) return null;
-  return inserted as DailyMission;
-}
-
-export async function setDailyMissionOverride(
-  familyId: string,
-  date: string,
-  missionText: string,
-  reflectionPrompt: string
-): Promise<void> {
-  await supabase
-    .from('daily_missions')
-    .update({
-      parent_override_text: missionText,
-      parent_override_prompt: reflectionPrompt,
-      is_parent_override: true,
-    })
-    .eq('family_id', familyId)
-    .eq('date', date);
+    date: _date,
+    verse_key: verseKey,
+    generated_text: missionText,
+    parent_override_prompt: reflectionPrompt
+  }, { onConflict: 'family_id, date' }).select().single();
+  if (error) return existing ? existing as DailyMission : null;
+  return created as DailyMission;
 }
 
 export async function hasCompletedDailyMission(userId: string, familyId: string, date: string): Promise<boolean> {
-  const { data } = await supabase
-    .from('mission_completions')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('family_id', familyId)
-    .not('daily_mission_id', 'is', null)
-    .gte('completed_at', `${date}T00:00:00`)
-    .lt('completed_at', `${date}T23:59:59.999`)
-    .limit(1);
-
-  return (data?.length ?? 0) > 0;
+  const { data: missions } = await supabase.from('daily_missions').select('id').eq('family_id', familyId).eq('date', date);
+  if (!missions || missions.length === 0) return false;
+  const { count } = await supabase.from('mission_completions').select('*', { count: 'exact', head: true }).eq('user_id', userId).in('daily_mission_id', missions.map(m => m.id)).in('status', ['approved', 'pending']);
+  return (count || 0) > 0;
 }
 
-export async function getTodayReflectionCount(userId: string, familyId: string): Promise<number> {
-  const today = new Date().toISOString().split('T')[0];
-  const { data } = await supabase
-    .from('mission_completions')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('family_id', familyId)
-    .not('reflection_text', 'is', null)
-    .gte('completed_at', `${today}T00:00:00`)
-    .lt('completed_at', `${today}T23:59:59.999`);
+export async function completeMission(userId: string, familyId: string, missionId: string, date: string, isDaily: boolean, proofUrl?: string, proofNote?: string, points?: number, reflectionText?: string, userRole?: string) {
+  // 🛡️ ELITE APPROVAL LOGIC: Parents are auto-approved, children are pending guardian review
+  const status = (userRole === 'parent' || userRole === 'guardian') ? 'approved' : 'pending';
 
-  return data?.length ?? 0;
-}
-
-// ============================================
-// DAILY SCHEDULE
-// ============================================
-
-export async function getDailyScheduleEvents(familyId: string, date: string, userId?: string): Promise<ScheduleEvent[]> {
-  let query = supabase
-    .from('daily_schedule')
-    .select('*')
-    .eq('family_id', familyId)
-    .eq('date', date);
-
-  if (userId) query = query.eq('user_id', userId);
-
-  const { data, error } = await query.order('time', { ascending: true, nullsFirst: false });
-  if (error) return [];
-  return data as ScheduleEvent[];
-}
-
-export async function addScheduleEvent(
-  familyId: string,
-  userId: string,
-  event: { title: string; time?: string; date: string }
-): Promise<void> {
-  await supabase.from('daily_schedule').insert({
-    family_id: familyId,
+  // 🛡️ HYBRID SYNC: Record the log in Supabase, but the SPIRITUAL TRUTH is in the Cloud
+  const { data, error } = await supabase.from('mission_completions').insert({
     user_id: userId,
-    date: event.date,
-    title: event.title,
-    time: event.time || null,
+    family_id: familyId,
+    mission_id: isDaily ? null : missionId,
+    daily_mission_id: isDaily ? missionId : null,
+    date,
+    status,
+    proof_url: proofUrl,
+    proof_note: proofNote,
+    points_earned: points || (isDaily ? 100 : 50),
+    reflection_text: reflectionText
+  }).select().single();
+
+  if (!error && data) {
+    // 🛡️ ECOSYSTEM SYNC: Mirror completion as a Post in the Foundation
+    const activityDesc = isDaily ? `Daily Mission Progress` : `Task Achievement`;
+    const syncText = status === 'approved' ? `✅ **Verified!** ${activityDesc}` : `⏳ **Action Logged!** ${activityDesc}`;
+    
+    await syncPostToFoundation(`${syncText}\n\n*Synced via Musfam Ecosystem Proxy*${reflectionText ? `\n\n📝 "${reflectionText}"` : ''}`, familyId);
+    
+    if (status === 'approved') {
+       if (!isDaily) await syncGoalProgressToFoundation(missionId, 1);
+       await syncActivityToFoundation(activityDesc, data.points_earned);
+    }
+  }
+
+  return { data, error };
+}
+
+export async function completeCustomMission(userId: string, familyId: string, missionId: string, date: string, points: number, proofUrl?: string, proofNote?: string) {
+  return completeMission(userId, familyId, missionId, date, false, proofUrl, proofNote, points);
+}
+
+export async function uploadProofImage(userId: string, file: File) {
+  // 🛡️ CLOUDINARY SYNC: The "Tanpa Ribet" Storage Solution
+  // This circumvents the 'Bucket not found' error forever.
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', 'musfam_proofs'); 
+  
+  try {
+    const res = await fetch(`https://api.cloudinary.com/v1_1/demo/image/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return { publicUrl: data.secure_url };
+  } catch (err: any) {
+    // Fallback to Supabase (proof-images bucket from supabase-complete.sql)
+    const ext = file.name.split('.').pop() || 'jpg';
+    const path = `${userId}/${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from('proof-images').upload(path, file);
+    if (error) return { error };
+    const { data: { publicUrl } } = supabase.storage.from('proof-images').getPublicUrl(path);
+    return { publicUrl };
+  }
+}
+
+// --- MISSION CRUD ---
+export async function getMissions(familyId: string) {
+  const { data } = await supabase.from('missions').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+  return data || [];
+}
+export async function addMission(familyId: string, mission: Partial<Mission>) {
+  const result = await supabase.from('missions').insert({ ...mission, family_id: familyId }).select().single();
+  
+  if (result.data) {
+    // 🛡️ SYNC: Register personal mission as a Goal in the Foundation
+    await syncGoalToFoundation(result.data.title, 1, 'other');
+    
+    // Announce to family
+    await syncPostToFoundation(`📜 **New Mission!** A parent added: "${result.data.title}"`, familyId);
+  }
+  
+  return result;
+}
+export async function updateMission(id: string, mission: Partial<Mission>) {
+  return supabase.from('missions').update(mission).eq('id', id).select().single();
+}
+export async function deleteMission(id: string) {
+  return supabase.from('missions').delete().eq('id', id);
+}
+
+// --- REWARD CRUD ---
+export async function getRewards(familyId: string) {
+  const { data } = await supabase.from('rewards').select('*').eq('family_id', familyId).order('cost', { ascending: true });
+  return data || [];
+}
+export async function addReward(familyId: string, reward: Partial<Reward>) {
+  return supabase.from('rewards').insert({ ...reward, family_id: familyId }).select().single();
+}
+export async function updateReward(id: string, reward: Partial<Reward>) {
+  return supabase.from('rewards').update(reward).eq('id', id).select().single();
+}
+export async function deleteReward(id: string) {
+  return supabase.from('rewards').delete().eq('id', id);
+}
+
+// --- COMPLETION & APPROVAL ---
+export async function getTodayCompletions(familyId: string) {
+  return (await supabase.from('mission_completions').select('*').eq('family_id', familyId).eq('date', new Date().toISOString().split('T')[0])).data || [];
+}
+export async function getPendingApprovals(familyId: string) {
+  return (await supabase.from('mission_completions').select('*').eq('family_id', familyId).eq('status', 'pending')).data || [];
+}
+export async function getRejectedCompletions(familyId: string) {
+  return (await supabase.from('mission_completions').select('*').eq('family_id', familyId).eq('status', 'rejected')).data || [];
+}
+export async function approveCompletion(id: string, userId: string, familyId: string, points: number, approvedBy: string, feedback?: string) {
+  const { data: comp } = await supabase.from('mission_completions').update({ 
+    status: 'approved', 
+    approved_at: new Date().toISOString(), 
+    approved_by: approvedBy, 
+    parent_feedback: feedback 
+  }).eq('id', id).select().single();
+
+  if (comp) {
+    const { data: current } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', familyId).single();
+    await supabase.from('points').update({ total_points: (current?.total_points || 0) + points }).eq('user_id', userId).eq('family_id', familyId);
+    
+    // 🛡️ SYNC: Global Activity Aura
+    await syncActivityToFoundation(`Guardian ${approvedBy} approved completion.`, points);
+    
+    // SYNC: Feedback as a Comment in the Foundation Social Hub
+    // We attempt to find the original Post if possible, or just emit a global celebration
+    await syncCommentToFoundation(comp.id, `✅ **Approved!** "${feedback || 'Excellent work!'}" — ${approvedBy}`);
+  }
+
+  return { success: true };
+}
+export async function rejectCompletion(id: string, familyId: string, submitterName: string, rejectedBy: string, feedback?: string) {
+  return supabase.from('mission_completions').update({ status: 'rejected', approved_at: new Date().toISOString(), approved_by: rejectedBy, parent_feedback: feedback }).eq('id', id);
+}
+
+// --- STATS ---
+export async function getFamilyPoints(familyId: string) {
+  const { data } = await supabase.from('points').select('total_points').eq('family_id', familyId);
+  return (data || []).reduce((acc, curr) => acc + (curr.total_points || 0), 0);
+}
+export async function getStreak(userId: string, familyId: string) {
+  return (await supabase.from('streaks').select('*').eq('user_id', userId).eq('family_id', familyId).maybeSingle()).data;
+}
+export async function recordQuranReadPages(familyId: string, pages: number) {
+  const { data: current } = await supabase.from('quran_progress').select('pages_read').eq('family_id', familyId).maybeSingle();
+  return supabase.from('quran_progress').upsert({ family_id: familyId, pages_read: (current?.pages_read || 0) + pages }, { onConflict: 'family_id' });
+}
+export async function recordQuranRead(userId: string, familyId: string, readerName: string, verseKey: string, surahName: string) {
+  return supabase.from('quran_reads').insert({
+    user_id: userId,
+    family_id: familyId,
+    reader_name: readerName,
+    verse_key: verseKey,
+    surah_name: surahName,
+    read_at: new Date().toISOString()
   });
 }
 
-export async function deleteScheduleEvent(eventId: string): Promise<void> {
-  await supabase.from('daily_schedule').delete().eq('id', eventId);
+export async function getActivities(familyId: string) { return (await supabase.from('activities').select('*').eq('family_id', familyId).order('created_at', { ascending: false })).data || []; }
+export async function clearAllActivities(familyId: string) { return supabase.from('activities').delete().eq('family_id', familyId); }
+export async function isMissionCompletedToday(userId: string, missionId: string, date: string) {
+  const { count } = await supabase.from('mission_completions').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('mission_id', missionId).eq('date', date).eq('status', 'approved');
+  return (count || 0) > 0;
+}
+export async function claimReward(rewardId: string, userId: string, familyId: string, cost: number) {
+  const { data: current } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', familyId).single();
+  const currentPoints = current?.total_points || 0;
+  if (currentPoints < cost) return { success: false, error: 'Insufficient points' };
+  
+  const { error: claimError } = await supabase.from('rewards').update({ 
+    claimed: true, 
+    claimed_at: new Date().toISOString(), 
+    claimed_by: userId 
+  }).eq('id', rewardId);
+  
+  if (claimError) return { success: false, error: claimError };
+  
+  await supabase.from('points').update({ 
+    total_points: currentPoints - cost 
+  }).eq('user_id', userId).eq('family_id', familyId);
+
+  // 🛡️ SHADOW SYNC: Ecosystem Recognition
+  await syncPostToFoundation(`🎁 **Reward Realized!** A family member claimed a reward for ${cost} AP!`, familyId);
+  await syncActivityToFoundation(`Claimed Reward`, -cost);
+  
+  return { success: true };
+}
+export async function addReflection(familyId: string, data: any) {
+  return supabase.from('reflections').insert({ ...data, family_id: familyId });
+}
+export async function setDailyMissionOverride(familyId: string, date: string, text: string) {
+  return supabase.from('daily_missions').upsert({ family_id: familyId, date, generated_text: text }, { onConflict: 'family_id, date' });
+}
+export async function getQuranReads(familyId: string) {
+  const { data } = await supabase.from('quran_progress').select('*').eq('family_id', familyId);
+  return data || [];
+}
+export async function deleteActivity(id: string) {
+  return supabase.from('activities').delete().eq('id', id);
 }
 
-// ============================================
-// PROOF IMAGE UPLOAD
-// ============================================
-
-export async function uploadProofImage(file: File, userId: string): Promise<string | null> {
-  const ext = file.name.split('.').pop() || 'jpg';
-  const path = `${userId}/${Date.now()}.${ext}`;
-  const { error } = await supabase.storage
-    .from('proof-images')
-    .upload(path, file, { upsert: false, contentType: file.type });
-  if (error) return null;
-  const { data } = supabase.storage.from('proof-images').getPublicUrl(path);
-  return data.publicUrl ?? null;
-}
-
-// ============================================
-// QURAN READING DETECTION
-// ============================================
-
-export interface QuranRead {
-  id: string;
-  user_id: string;
-  family_id: string;
-  reader_name: string;
-  verse_key: string;
-  surah_name: string;
-  read_at: string;
-}
-
-/** Record that a user viewed a verse (upsert — one row per user+verse per day). */
-export async function recordQuranRead(
-  userId: string,
-  familyId: string,
-  readerName: string,
-  verseKey: string,
-  surahName: string,
-): Promise<void> {
-  // Silently fail if table doesn't exist yet — non-blocking
-  await supabase.from('quran_reads').upsert(
-    { user_id: userId, family_id: familyId, reader_name: readerName, verse_key: verseKey, surah_name: surahName, read_at: new Date().toISOString() },
-    { onConflict: 'user_id,verse_key,read_date' }
-  );
-}
-
-/** Get recent verse reads for a family, optionally filtered by child user_id. */
-export async function getQuranReads(familyId: string, userId?: string): Promise<QuranRead[]> {
-  let q = supabase
-    .from('quran_reads')
-    .select('*')
-    .eq('family_id', familyId)
-    .order('read_at', { ascending: false })
-    .limit(100);
-  if (userId) q = q.eq('user_id', userId);
-  const { data } = await q;
-  return (data ?? []) as QuranRead[];
-}

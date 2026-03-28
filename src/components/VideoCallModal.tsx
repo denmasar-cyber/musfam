@@ -5,9 +5,13 @@ import { useSwipeDown } from '@/hooks/useSwipeDown';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, Users, Monitor, MonitorOff,
   BookOpen, X, Smile, CheckSquare, Square, Plus, Trash2,
-  Search, ChevronRight, ArrowLeft,
+  Search, ChevronRight, ArrowLeft, Star, Trophy, Volume2, Play, Pause, Repeat,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { getDailyMission } from '@/lib/store';
+import type { DailyMission } from '@/lib/types';
+import { getDailyVerseKey } from '@/lib/quran-api';
+import { syncActivityToFoundation } from '@/lib/quran-foundation-sync';
 
 export interface IncomingCallInfo {
   callerName: string;
@@ -158,6 +162,8 @@ export default function VideoCallModal({
 
   const [todos, setTodos] = useState<CallTodo[]>([]);
   const [todoInput, setTodoInput] = useState('');
+  const [dailyGoal, setDailyGoal] = useState<DailyMission | null>(null);
+  const [juzDivision, setJuzDivision] = useState<{ juz: number; assignments: Record<string, string> } | null>(null);
 
   const quran = useQuranSearch();
 
@@ -284,6 +290,14 @@ export default function VideoCallModal({
     }
 
     if (msg.type === 'todo_sync') { setTodos(msg.payload as CallTodo[]); return; }
+    if (msg.type === 'recite') {
+      const vk = msg.payload as string;
+      const [ch, ay] = vk.split(':');
+      const audio = new Audio(`https://verses.quran.com/Mishary_Rashid_Alafasy/mp3/${ch.padStart(3,'0')}${ay.padStart(3,'0')}.mp3`);
+      audio.play().catch(() => {});
+      return;
+    }
+    if (msg.type === 'juzDivision') { setJuzDivision(msg.payload as any); return; }
 
     let pc = peersRef.current.get(from)?.connection;
     if (!pc && msg.type === 'offer') pc = createPeerConnection(from, name, false);
@@ -304,7 +318,17 @@ export default function VideoCallModal({
   useEffect(() => {
     let cancelled = false;
     async function start() {
-      // Request camera+mic. Try increasingly permissive constraints then audio-only.
+      // Fetch daily goal for reference in call
+      const todayStr = new Date().toISOString().split('T')[0];
+      // We'll use a simplified version or the one from channel if available.
+      // But for now, we try to fetch if we have an ID.
+      // channelName in this context is often the family ID
+      if (channelName.length > 20) { // looks like a UUID
+         const dk = getDailyVerseKey(todayStr);
+         getDailyMission(channelName, todayStr, dk).then(m => setDailyGoal(m));
+      }
+
+      // Request camera+mic.
       // IMPORTANT: must run from HTTPS or localhost — browser blocks getUserMedia on HTTP.
       let gotStream = false;
       let videoGranted = false;
@@ -385,6 +409,17 @@ export default function VideoCallModal({
   const deleteTodo = (id: string) => {
     const next = todos.filter(t => t.id !== id);
     setTodos(next); broadcastTodos(next);
+  };
+
+  const syncRecitation = (vk: string) => {
+    channelRef.current?.send({ type: 'broadcast', event: 'signal', payload: { from: userId, to: '*', type: 'recite', payload: vk, name: displayName } });
+    const [ch, ay] = vk.split(':');
+    const audio = new Audio(`https://verses.quran.com/Mishary_Rashid_Alafasy/mp3/${ch.padStart(3,'0')}${ay.padStart(3,'0')}.mp3`);
+    audio.play().catch(() => {});
+  };
+
+  const broadcastJuzDivision = (data: any) => {
+    channelRef.current?.send({ type: 'broadcast', event: 'signal', payload: { from: userId, to: '*', type: 'juzDivision', payload: data, name: displayName } });
   };
 
   const sendEmoji = (emoji: string) => {
@@ -515,8 +550,16 @@ export default function VideoCallModal({
           </div>
         </div>
 
-        {/* Center: clock */}
-        <span className="text-white/60 text-xs font-mono">{clock}</span>
+        {/* Center: clock + goal badge */}
+        <div className="flex flex-col items-center">
+          <span className="text-white/60 text-[10px] font-mono mb-0.5">{clock}</span>
+          {dailyGoal && (
+            <div className="flex items-center gap-1 bg-[#5a6b28]/20 px-2 py-0.5 rounded-full border border-[#5a6b28]/30">
+              <Star size={8} className="text-[#5a6b28] fill-[#5a6b28]" />
+              <span className="text-[#5a6b28] text-[9px] font-bold uppercase tracking-wider">Daily Goal Active</span>
+            </div>
+          )}
+        </div>
 
       </div>
 
@@ -848,6 +891,23 @@ export default function VideoCallModal({
             {/* ── Todos sheet ── */}
             {activePanel === 'todos' && (
               <div className="flex-1 overflow-y-auto flex flex-col p-4 gap-3">
+                {dailyGoal && (
+                  <div className="mb-4 p-4 bg-gradient-to-br from-[#1a2508] to-[#0f1605] rounded-2xl border border-[#5a6b28]/30 shadow-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Trophy size={16} className="text-[#5a6b28]" />
+                      <p className="text-[#5a6b28] text-xs font-bold uppercase">Family Mission (Daily Goal)</p>
+                    </div>
+                    <p className="text-white text-sm font-medium leading-relaxed">
+                      {dailyGoal.parent_override_text || dailyGoal.generated_text}
+                    </p>
+                    <div className="mt-3 flex items-center gap-2">
+                       <div className="w-full bg-[#5a6b28]/10 h-1.5 rounded-full overflow-hidden">
+                          <div className="bg-[#5a6b28] h-full w-1/3 animate-pulse" />
+                       </div>
+                       <span className="text-white/30 text-[10px] whitespace-nowrap">Group Goal</span>
+                    </div>
+                  </div>
+                )}
                 <div className="flex gap-2 flex-shrink-0">
                   <input type="text" value={todoInput} onChange={e => setTodoInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && addTodo()}

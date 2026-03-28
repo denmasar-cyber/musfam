@@ -63,10 +63,10 @@ export default function ShopPage() {
   const progressToNext = nextReward ? Math.min((points / nextReward.cost) * 100, 100) : 100;
   const pointsToGo = nextReward ? Math.max(nextReward.cost - points, 0) : 0;
 
-  async function handleClaim(rewardId: string) {
+  async function handleClaim(reward: Reward) {
     if (!user || !family) return;
-    const success = await claimReward(user.id, family.id, rewardId);
-    if (success) refreshData();
+    const res = await claimReward(reward.id, user.id, family.id, reward.cost);
+    if (res.success) refreshData();
   }
 
   return (
@@ -104,7 +104,7 @@ export default function ShopPage() {
             {pointsToGo === 0 && (
               <button
                 type="button"
-                onClick={() => handleClaim(nextReward.id)}
+                onClick={() => handleClaim(nextReward)}
                 className="mt-3 w-full py-3 rounded-xl bg-gold text-white font-bold text-sm hover:bg-gold-dark transition-colors"
               >
                 Claim Reward

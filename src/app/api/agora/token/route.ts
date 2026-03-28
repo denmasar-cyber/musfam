@@ -5,8 +5,11 @@ import jwt from 'jsonwebtoken';
 // Generates a Zoom Video SDK JWT signature for joining a session.
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const channel = searchParams.get('channel') || 'musfam-family';
+  const rawChannel = searchParams.get('channel') || 'musfam-family';
   const uid = searchParams.get('uid') || '0';
+
+  // Align Agora channel with Quran Foundation Room identifier
+  const channel = rawChannel.startsWith('quran-room-') ? rawChannel : `quran-room-${rawChannel}`;
 
   const sdkKey = process.env.ZOOM_VIDEO_SDK_KEY;
   const sdkSecret = process.env.ZOOM_VIDEO_SDK_SECRET;

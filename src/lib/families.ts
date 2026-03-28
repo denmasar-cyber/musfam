@@ -72,7 +72,10 @@ export async function joinFamily(
     .select('*')
     .eq('invite_code', inviteCode.toUpperCase())
     .single();
-  if (lookupError || !family) throw new Error('Invalid invite code');
+  if (lookupError || !family) {
+    console.error("Family lookup failed:", lookupError?.message || "Not found");
+    throw new Error('Invalid invite code. Please check and try again.');
+  }
 
   // Upsert profile
   const { error: profileError } = await supabase

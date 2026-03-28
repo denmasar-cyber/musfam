@@ -229,7 +229,7 @@ export default function OnboardingPage() {
                 id="joinCode"
                 type="text"
                 value={joinCode}
-                onChange={e => setJoinCode(e.target.value.toUpperCase())}
+                onChange={e => setJoinCode(e.target.value.toUpperCase().trim())}
                 required
                 maxLength={6}
                 placeholder="e.g. X7K2AB"

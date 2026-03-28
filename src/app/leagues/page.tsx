@@ -8,9 +8,9 @@ import {
   getRewards, addReward, deleteReward, updateReward,
   isMissionCompletedToday, getActivities, deleteActivity, clearAllActivities,
   getPendingApprovals, getRejectedCompletions, approveCompletion, rejectCompletion,
-  DailyMission, PendingApproval, uploadProofImage, getStreak,
+  uploadProofImage, getStreak,
 } from '@/lib/store';
-import type { Mission, ActivityEntry, Reward } from '@/lib/types';
+import type { Mission, ActivityEntry, Reward, DailyMission, PendingApproval } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useSwipeDown } from '@/hooks/useSwipeDown';
@@ -219,7 +219,7 @@ export default function LeaguesPage() {
       const [rewardList, todayCompletions, rejectedCompletions] = await Promise.all([
         getRewards(family.id),
         getTodayCompletions(family.id),
-        getRejectedCompletions(user.id, family.id),
+        getRejectedCompletions(family.id),
       ]);
       const visibleRewards = rewardList.filter(r =>
         r.visible_to_child !== false && (!r.assigned_to || r.assigned_to === user.id)
@@ -238,7 +238,7 @@ export default function LeaguesPage() {
     const completedSet = new Set<string>();
     if (profile.role === 'parent') {
       await Promise.all(allMissions.map(async (m) => {
-        const done = await isMissionCompletedToday(family.id, m.id);
+        const done = await isMissionCompletedToday(user.id, m.id, today);
         if (done) completedSet.add(m.id);
       }));
       setCompletedCustomIds(completedSet);
@@ -274,13 +274,14 @@ export default function LeaguesPage() {
         // Dense rank for families (ties share rank, secondary sort: name)
         // If fewer than 3 families in DB, pad with demo competitor families for leaderboard
         const DEMO_COMPETITORS: FamilyRank[] = [
-          { family_id: 'demo-barakah', family_name: 'Keluarga Barakah', total_points: 1980, rank: 0 },
-          { family_id: 'demo-shaleh',  family_name: 'Keluarga Shaleh',  total_points: 1450, rank: 0 },
-          { family_id: 'demo-nur',     family_name: 'Keluarga Nur',     total_points: 980,  rank: 0 },
+          { family_id: 'demo-alfatih',   family_name: 'Al-Fatih Family',   total_points: 2500, rank: 0 },
+          { family_id: 'demo-bilal',     family_name: 'Bilal Warriors',    total_points: 1800, rank: 0 },
+          { family_id: 'demo-nurul',     family_name: 'Nurul Quran',       total_points: 1250, rank: 0 },
+          { family_id: 'demo-barakah',   family_name: 'Barakah Circle',    total_points: 920,  rank: 0 },
         ];
-        const realFamilyCount = familyTotals.size;
+        
         for (const demo of DEMO_COMPETITORS) {
-          if (realFamilyCount < 3 && !familyTotals.has(demo.family_id)) {
+          if (!familyTotals.has(demo.family_id)) {
             familyTotals.set(demo.family_id, demo.total_points);
             familyNameMap.set(demo.family_id, demo.family_name);
           }
@@ -293,9 +294,10 @@ export default function LeaguesPage() {
           return { family_id: fid, family_name: familyNameMap.get(fid) || 'Family', total_points: pts, rank: familyRankNum };
         }));
 
+        // 2. Members (Internal Family only)
         const memberTotals = new Map<string, { total: number; family_id: string }>();
-        for (const row of pointsRows) {
-          if (!row.user_id) continue;
+        for (const row of (pointsRows ?? [])) {
+          if (row.family_id !== family.id) continue; // Internal only
           const prev = memberTotals.get(row.user_id);
           memberTotals.set(row.user_id, { total: (prev?.total ?? 0) + row.total_points, family_id: row.family_id });
         }
@@ -304,7 +306,7 @@ export default function LeaguesPage() {
         const profileMap = new Map<string, { name: string; family_id: string }>();
         for (const p of (profileRows ?? [])) profileMap.set(p.id, { name: p.name, family_id: p.family_id });
 
-        // Dense rank for members (ties share rank, secondary sort: name)
+        // Dense rank for members (Internal)
         const sortedMembers = [...memberTotals.entries()]
           .sort((a, b) => b[1].total - a[1].total || (profileMap.get(a[0])?.name || '').localeCompare(profileMap.get(b[0])?.name || ''));
         let memberRankNum = 0, prevMemberPts = -1;
@@ -313,7 +315,8 @@ export default function LeaguesPage() {
           const prof = profileMap.get(uid);
           return { user_id: uid, member_name: prof?.name || 'Member', family_name: familyNameMap.get(info.family_id) || 'Family', total_points: info.total, rank: memberRankNum, is_me: false };
         });
-        const meUid = (await supabase.auth.getUser()).data.user?.id;
+        const currentUser = (await supabase.auth.getUser()).data.user;
+        const meUid = currentUser?.id;
         setMemberBoard(memberRanks.map(m => ({ ...m, is_me: m.user_id === meUid })));
       }
       setMyFamilyPoints(await getFamilyPoints(family.id));
@@ -340,7 +343,7 @@ export default function LeaguesPage() {
     let finalProofNote = proofNote;
     if (proofFile) {
       setUploadingProof(true);
-      const url = await uploadProofImage(proofFile, user.id);
+      const { publicUrl: url } = await uploadProofImage(user.id, proofFile);
       setUploadingProof(false);
       if (url) finalProofNote = url;
     }
@@ -350,12 +353,13 @@ export default function LeaguesPage() {
       : reflectionText;
 
     let success = false;
+    const today = new Date().toISOString().split('T')[0];
     if (completionTarget.type === 'daily') {
-      const result = await completeMission(user.id, family.id, completionTarget.id, finalReflection, profile?.name, profile?.role);
-      success = !!result;
+      const result = await completeMission(user.id, family.id, completionTarget.id, today, true, finalProofNote || undefined, reflectionText);
+      success = !!result.data;
     } else {
-      const result = await completeCustomMission(user.id, family.id, completionTarget.id, finalReflection, profile?.name, profile?.role);
-      success = !!result;
+      const result = await completeCustomMission(user.id, family.id, completionTarget.id, today, 10, finalProofNote || undefined, reflectionText);
+      success = !!result.data;
     }
     setSubmitting(false);
     if (!success) return; // already completed or error
@@ -383,11 +387,12 @@ export default function LeaguesPage() {
   async function handleAddMission() {
     if (!newMissionTitle.trim() || !user || !family) return;
     setAddingMission(true);
-    await addMission(family.id, user.id, {
+    await addMission(family.id, {
       title: newMissionTitle.trim(), description: '', category: newMissionCat,
       icon: newMissionCat === 'spiritual' ? 'sparkles' : newMissionCat === 'health' ? 'activity' : newMissionCat === 'chores' ? 'home' : 'book-open',
       points: parseInt(newMissionPoints) || 10,
       visible_to_child: newMissionVisible,
+      created_by: user.id
     });
     setNewMissionTitle(''); setNewMissionPoints('10'); setNewMissionVisible(true);
     setShowAddMission(false);
@@ -410,8 +415,8 @@ export default function LeaguesPage() {
 
   // Parent: approve/reject
   async function handleApprove(a: PendingApproval) {
-    if (!family) return;
-    await approveCompletion(a.id, a.user_id, family.id, a.points_earned);
+    if (!family || !profile) return;
+    await approveCompletion(a.id, a.user_id, family.id, a.points_earned, profile.name);
     setPendingApprovals(prev => prev.filter(x => x.id !== a.id));
   }
   async function handleReject(a: PendingApproval) {
@@ -426,8 +431,9 @@ export default function LeaguesPage() {
     if (submitReflection.trim().length < 5) return;
     setSubmitSubmitting(true);
     const missionId = submitTarget.id;
-    const result = await completeCustomMission(user.id, family.id, missionId, submitReflection.trim(), profile.name, profile.role);
-    if (result) {
+    const today = new Date().toISOString().split('T')[0];
+    const result = await completeCustomMission(user.id, family.id, missionId, today, submitTarget.points || 10, undefined, submitReflection.trim());
+    if (result && result.data) {
       setCompletedCustomIds(prev => new Set([...prev, missionId]));
       setRejectedMissionIds(prev => prev.filter(id => id !== missionId));
     }
@@ -875,21 +881,57 @@ export default function LeaguesPage() {
                   </div>
                 )}
                 <div className="space-y-2">
-                  {auraBoard.map(r => {
-                    const isMe = r.family_id === family?.id;
-                    const isTied = auraBoard.filter(x => x.rank === r.rank).length > 1;
-                    const rankLabel = `${isTied ? '=' : ''}${r.rank}`;
+                  {(() => {
+                    const top4 = auraBoard.slice(0, 4);
+                    const myFamilyRank = auraBoard.find(r => r.family_id === family?.id);
+                    const isInTop4 = top4.some(r => r.family_id === family?.id);
+                    
+                    // The 5th slot is the user's family. 
+                    // If the user already in Top 4, we show the 5th place family instead to keep it full at 5 entries.
+                    const slot5 = isInTop4 ? auraBoard[4] : myFamilyRank;
+
                     return (
-                      <div key={r.family_id} className={`rounded-2xl px-4 py-3 border flex items-center gap-3 ${isMe ? 'bg-forest/5 border-forest/30' : 'bg-white border-cream-dark'}`}>
-                        <span className={`text-sm font-extrabold w-7 text-center ${r.rank <= 3 ? 'text-gold-dark' : 'text-gray-400'}`}>{rankLabel}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className={`font-bold text-sm ${isMe ? 'text-forest' : 'text-gray-800'}`}>{r.family_name}</p>
-                          {isMe && <p className="text-[10px] text-forest/60 font-bold">Your family</p>}
-                        </div>
-                        <span className="font-extrabold text-sm text-gray-700">{r.total_points.toLocaleString()} AP</span>
-                      </div>
+                      <>
+                        {top4.map(r => {
+                          const isMe = r.family_id === family?.id;
+                          const isTied = auraBoard.filter(x => x.rank === r.rank).length > 1;
+                          const rankLabel = `${isTied ? '=' : ''}${r.rank}`;
+                          return (
+                            <div key={r.family_id} className={`rounded-2xl px-4 py-3 border flex items-center gap-3 ${isMe ? 'bg-forest/10 border-forest shadow-md shadow-forest/10 ring-1 ring-forest/20' : 'bg-white border-cream-dark'}`}>
+                              <span className={`text-sm font-extrabold w-7 text-center ${r.rank <= 3 ? 'text-gold-dark' : 'text-gray-400'}`}>{rankLabel}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className={`font-bold text-sm ${isMe ? 'text-forest' : 'text-gray-800'}`}>{r.family_name}</p>
+                                {isMe && <p className="text-[10px] text-forest/60 font-bold">Your family</p>}
+                              </div>
+                              <span className="font-extrabold text-sm text-gray-700">{r.total_points.toLocaleString()} AP</span>
+                            </div>
+                          );
+                        })}
+
+                        {slot5 && (
+                          <>
+                            {!isInTop4 && (
+                              <div className="flex items-center gap-2 px-2 py-1">
+                                <div className="flex-1 h-px bg-cream-dark" />
+                                <span className="text-[9px] text-gray-400 font-extrabold uppercase tracking-widest">Global Rank</span>
+                                <div className="flex-1 h-px bg-cream-dark" />
+                              </div>
+                            )}
+                            <div key={slot5.family_id} className={`rounded-2xl px-4 py-3 border flex items-center gap-3 ${slot5.family_id === family?.id ? 'bg-forest text-white border-forest shadow-lg shadow-forest/20' : 'bg-white border-cream-dark'}`}>
+                              <span className={`text-sm font-extrabold w-7 text-center ${slot5.rank <= 3 ? 'text-gold-dark' : slot5.family_id === family?.id ? 'text-white' : 'text-gray-400'}`}>
+                                {slot5.rank}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <p className={`font-bold text-sm ${slot5.family_id === family?.id ? 'text-white' : 'text-gray-800'}`}>{slot5.family_name}</p>
+                                {slot5.family_id === family?.id && <p className="text-[10px] text-white/70 font-bold">Your family</p>}
+                              </div>
+                              <span className={`font-extrabold text-sm ${slot5.family_id === family?.id ? 'text-white' : 'text-gray-700'}`}>{slot5.total_points.toLocaleString()} AP</span>
+                            </div>
+                          </>
+                        )}
+                      </>
                     );
-                  })}
+                  })()}
                   {auraBoard.length === 0 && (
                     <div className="text-center py-12">
                       <Trophy size={40} className="text-gray-200 mx-auto mb-3" />
@@ -905,23 +947,27 @@ export default function LeaguesPage() {
                   const rankLabelM = `${isTiedM ? '=' : ''}${m.rank}`;
                   const flag = m.is_me ? myFlag : '';
                   return (
-                  <div key={m.user_id} className={`rounded-2xl px-4 py-3 border flex items-center gap-3 ${m.is_me ? 'bg-forest/5 border-forest/30' : 'bg-white border-cream-dark'}`}>
-                    <span className={`text-sm font-extrabold w-7 text-center ${m.rank <= 3 ? 'text-gold-dark' : 'text-gray-400'}`}>{rankLabelM}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        {flag && <span className="text-base leading-none flex-shrink-0">{flag}</span>}
-                        <p className={`font-bold text-sm ${m.is_me ? 'text-forest' : 'text-gray-800'}`}>{m.member_name}</p>
+                    <div key={m.user_id} className={`rounded-xl px-4 py-4 border flex items-center gap-4 ${m.is_me ? 'bg-forest/10 border-forest shadow-md ring-1 ring-forest/20' : 'bg-white border-cream-dark shadow-sm'}`}>
+                      <span className={`text-base font-extrabold w-8 text-center ${m.rank <= 3 ? 'text-gold-dark' : 'text-gray-400'}`}>{rankLabelM}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          {flag && <span className="text-xl leading-none flex-shrink-0">{flag}</span>}
+                          <p className={`font-bold text-base ${m.is_me ? 'text-forest' : 'text-gray-900'}`}>{m.member_name}</p>
+                        </div>
+                        <p className="text-xs text-gray-500 font-medium">{m.family_name}</p>
                       </div>
-                      <p className="text-[10px] text-gray-400 truncate">{m.family_name}</p>
+                      <div className="text-right">
+                        <span className="font-extrabold text-base text-gray-900">{m.total_points.toLocaleString()}</span>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Aura Points</p>
+                      </div>
                     </div>
-                    <span className="font-extrabold text-sm text-gray-700">{m.total_points.toLocaleString()} AP</span>
-                  </div>
                   );
                 })}
+
                 {memberBoard.length === 0 && (
-                  <div className="text-center py-12">
-                    <Trophy size={40} className="text-gray-200 mx-auto mb-3" />
-                    <p className="text-gray-400 text-sm">No member rankings yet</p>
+                  <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-cream-dark">
+                    <Trophy size={48} className="text-gray-200 mx-auto mb-4" />
+                    <p className="text-gray-400 font-medium">No family members found</p>
                   </div>
                 )}
               </div>

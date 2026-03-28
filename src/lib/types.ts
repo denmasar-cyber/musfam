@@ -11,7 +11,7 @@ export interface Profile {
   id: string;
   family_id: string;
   name: string;
-  role: 'parent' | 'child';
+  role: 'parent' | 'child' | 'guardian';
   avatar_url?: string;
   created_at: string;
 }
@@ -36,11 +36,17 @@ export interface MissionCompletion {
   id: string;
   family_id: string;
   user_id: string;
-  mission_id: string;
+  mission_id: string | null;
+  daily_mission_id?: string | null;
   completed_at: string;
   reflection_text?: string;
   verse_id?: number;
   points_earned: number;
+  status: 'pending' | 'approved' | 'rejected';
+  submitter_name?: string;
+  guardian_name?: string;
+  guardian_feedback?: string;
+  proof_url?: string;
 }
 
 export interface Reflection {
@@ -128,3 +134,41 @@ export const CATEGORY_COLORS: Record<Mission['category'], CategoryColor> = {
     iconBg: 'bg-lime-500',
   },
 };
+
+export interface VerseOfDay {
+  verse_key: string;
+  text_arabic: string;
+  translation: string;
+  surah_name: string;
+  ayah_number: string;
+}
+
+export interface DailyMission {
+  id: string;
+  family_id: string;
+  date: string;
+  verse_key: string;
+  generated_text: string;
+  generated_prompt: string;
+  parent_override_text?: string;
+  parent_override_prompt?: string;
+  is_parent_override?: boolean;
+  points: number;
+  created_at: string;
+}
+
+export interface PendingApproval extends MissionCompletion {
+  id: string;
+  submitter_name: string;
+}
+
+export interface QuranRead {
+  id: string;
+  family_id: string;
+  user_id: string;
+  reader_name: string;
+  surah_name: string;
+  verse_key: string;
+  read_at: string;
+}
+

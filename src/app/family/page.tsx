@@ -37,11 +37,12 @@ export default function FamilyPage() {
 
   async function handleAddMission() {
     if (!newTitle.trim() || !user || !family) return;
-    await addMission(family.id, user.id, {
+    await addMission(family.id, {
       title: newTitle.trim(),
       description: '',
       category: newCategory,
       icon: newCategory === 'spiritual' ? 'sparkles' : newCategory === 'health' ? 'activity' : newCategory === 'chores' ? 'home' : 'book-open',
+      created_by: user.id
     });
     setNewTitle('');
     refreshData();

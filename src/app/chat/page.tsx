@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { uploadProofImage } from '@/lib/store';
-import { Send, BookOpen, X, Loader2, Trash2, Users, Mic, MicOff, Video, CornerUpLeft, ChevronLeft } from 'lucide-react';
+import { syncPostToFoundation } from '@/lib/quran-foundation-sync';
+import { Send, BookOpen, X, Loader2, Trash2, Users, Mic, MicOff, Video, Camera, CornerUpLeft, ChevronLeft } from 'lucide-react';
 import VideoCallModal from '@/components/VideoCallModal';
 import LoadingBlock from '@/components/LoadingBlock';
 import { useSwipeDown } from '@/hooks/useSwipeDown';
@@ -85,10 +86,13 @@ export default function ChatPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [sendingVoice, setSendingVoice] = useState(false);
-  const [showIconPicker, setShowIconPicker] = useState(false);
-  const [familyIcon, setFamilyIcon] = useState<string>(family?.icon || '');
+  const [familyIcon, setFamilyIcon] = useState<string>('upload');
+  const [dailyMission, setDailyMission] = useState<any>(null);
+  const [verseOfDay, setVerseOfDay] = useState<any>(null);
+  const [missionLoading, setMissionLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const iconUploadRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -99,22 +103,53 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (family?.icon) setFamilyIcon(family.icon);
-  }, [family?.icon]);
+    else if (family?.id) {
+       // Deep fetch if not in auth context
+       supabase.from('families').select('icon').eq('id', family.id).single().then(({ data }) => {
+         if (data?.icon) setFamilyIcon(data.icon);
+         else setFamilyIcon('upload');
+       });
+    }
+  }, [family]);
 
   const loadMessages = useCallback(async () => {
     if (!family || !user) return;
-    const { data: clearRow } = await supabase
-      .from('chat_clear_timestamps')
-      .select('cleared_at')
-      .eq('user_id', user.id)
-      .eq('family_id', family.id)
-      .maybeSingle();
-    const clearedAt = clearRow?.cleared_at ?? null;
-    setMyClearedAt(clearedAt);
-    let query = supabase.from('family_messages').select('*').eq('family_id', family.id).order('created_at', { ascending: true }).limit(200);
-    if (clearedAt) query = query.gt('created_at', clearedAt);
-    const { data } = await query;
-    if (data) setMessages(data as ChatMessage[]);
+    
+    setLoading(true);
+    try {
+      // 1. Load Messages
+      // 🛡️ ECOSYSTEM SYNC: Fetch message history from Quran Foundation
+      const res = await fetch(`/api/quran/sync?action=posts&room_id=${family.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        const foundationMessages: ChatMessage[] = (data.posts || []).map((p: any) => ({
+          id: p.id,
+          family_id: family.id,
+          user_id: p.user_id,
+          sender_name: p.user?.name || 'Member',
+          sender_role: 'child', 
+          content: p.content,
+          created_at: p.created_at
+        }));
+        setMessages(foundationMessages);
+      } else {
+        const { data } = await supabase.from('family_messages').select('*').eq('family_id', family.id).order('created_at', { ascending: true }).limit(50);
+        if (data) setMessages(data as ChatMessage[]);
+      }
+
+      // 2. Load Daily Mission
+      setMissionLoading(true);
+      const vK = Date.now().toString(); // simplistic key
+      const { data: vRes } = await supabase.from('daily_verse_cache').select('*').limit(1).maybeSingle();
+      if (vRes) setVerseOfDay(vRes);
+      
+      const { data: mRes } = await supabase.from('daily_missions').select('*').eq('family_id', family.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (mRes) setDailyMission(mRes);
+      setMissionLoading(false);
+
+    } catch (err) {
+      console.error('Foundation Sync Error:', err);
+    }
     setLoading(false);
   }, [family, user]);
 
@@ -122,11 +157,20 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!family) return;
-    const channel = supabase.channel(`family_chat_${family.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'family_messages', filter: `family_id=eq.${family.id}` },
-        (payload) => setMessages(prev => [...prev, payload.new as ChatMessage]))
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    const channelArr = [
+      supabase.channel(`family_chat_${family.id}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'family_messages', filter: `family_id=eq.${family.id}` },
+          (payload) => setMessages(prev => [...prev, payload.new as ChatMessage]))
+        .subscribe(),
+      supabase.channel(`family_info_${family.id}`)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'families', filter: `id=eq.${family.id}` },
+          (payload) => {
+            const up = payload.new as any;
+            setFamilyIcon(up.icon || '');
+          })
+        .subscribe()
+    ];
+    return () => { channelArr.forEach(c => supabase.removeChannel(c)); };
   }, [family]);
 
   useEffect(() => {
@@ -147,7 +191,19 @@ export default function ChatPage() {
       setReplyTo(null);
     }
     setSending(true);
-    await supabase.from('family_messages').insert({ family_id: family.id, user_id: user.id, sender_name: profile.name, sender_role: profile.role, content });
+    
+    // 🛡️ ECOSYSTEM SYNC: Send to Quran Foundation Social Cloud
+    await syncPostToFoundation(content, family.id);
+    
+    // Maintain local Supabase for instant Realtime broadcast within the family app
+    await supabase.from('family_messages').insert({ 
+      family_id: family.id, 
+      user_id: user.id, 
+      sender_name: profile.name, 
+      sender_role: profile.role, 
+      content 
+    });
+    
     setInput(''); setSending(false); inputRef.current?.focus();
   }
 
@@ -172,6 +228,7 @@ export default function ChatPage() {
   async function sendShareAyah() {
     if (!shareResult || !user || !family || !profile) return;
     const text = `${verseKeyToLabel(shareResult.key)}\n${shareResult.arabic}\n\n"${shareResult.translation}"`;
+    void syncPostToFoundation(text);
     await supabase.from('family_messages').insert({ family_id: family.id, user_id: user.id, sender_name: profile.name, sender_role: profile.role, content: text });
     setShowShareAyah(false); setShareInput(''); setShareResult(null);
   }
@@ -217,8 +274,10 @@ export default function ChatPage() {
 
   async function updateFamilyIcon(icon: string) {
     if (!family || profile?.role !== 'parent') return;
-    setFamilyIcon(icon); setShowIconPicker(false);
-    await supabase.from('families').update({ icon }).eq('id', family.id);
+    const cacheBuster = icon.includes('?') ? `&t=${Date.now()}` : `?t=${Date.now()}`;
+    const newIconUrl = icon.includes('http') ? `${icon}${cacheBuster}` : icon;
+    setFamilyIcon(newIconUrl);
+    await supabase.from('families').update({ icon: newIconUrl }).eq('id', family.id);
   }
 
   async function deleteMessage(msgId: string) {
@@ -282,30 +341,60 @@ export default function ChatPage() {
         />
       )}
 
-      {/* Chat header */}
-      <div className="bg-[#2d3a10] text-white px-3 py-2.5 flex items-center justify-between shadow-sm flex-shrink-0 z-10 batik-overlay">
+      {/* Chat header (z-100 to stay above messages) */}
+      <div className="relative bg-[#2d3a10] text-white px-3 py-2.5 flex items-center justify-between shadow-sm flex-shrink-0 z-[100] overflow-visible batik-overlay rounded-none">
+        
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => router.push('/')} title="Back"
             className="w-8 h-8 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors">
             <ChevronLeft size={18} className="text-white" />
           </button>
-          <div className="relative">
+          <div className="relative overflow-visible">
+            <input
+              type="file"
+              ref={iconUploadRef}
+              className="hidden"
+              accept="image/*"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file || !user || !family) return;
+                
+                // Optimistic UI Update: Show the image immediately
+                const localUrl = URL.createObjectURL(file);
+                setFamilyIcon(localUrl);
+                
+                const ext = file.name.split('.').pop() || 'jpg';
+                const path = `family_${family.id}.${ext}`;
+                const { data: uploadData, error } = await supabase.storage
+                  .from('avatars')
+                  .upload(path, file, { upsert: true, contentType: file.type });
+                
+                if (!error && uploadData) {
+                  const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+                  if (urlData?.publicUrl) {
+                    await updateFamilyIcon(urlData.publicUrl);
+                  }
+                } else if (error) {
+                  console.error('Family icon upload error:', error.message);
+                }
+              }}
+            />
             <button type="button"
-              onClick={() => profile?.role === 'parent' && setShowIconPicker(s => !s)}
-              className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center font-bold text-base select-none"
-              title={profile?.role === 'parent' ? 'Change group icon' : undefined}>
-              {familyIcon ? <span className="text-lg">{familyIcon}</span> : (family?.name?.charAt(0)?.toUpperCase() || 'F')}
+              onClick={() => profile?.role === 'parent' && iconUploadRef.current?.click()}
+              className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold text-base select-none overflow-hidden relative z-10 hover:bg-white/30 active:scale-95 transition-all"
+              title={profile?.role === 'parent' ? 'Click to change group icon' : undefined}>
+              {familyIcon && familyIcon.length > 0 && familyIcon !== 'upload' ? (
+                familyIcon.includes('/') ? (
+                  <img src={familyIcon} alt="Group" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-lg">{familyIcon}</span>
+                )
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-white/10 text-white/50">
+                   <Camera size={18} />
+                </div>
+              )}
             </button>
-            {showIconPicker && (
-              <div className="absolute top-11 left-0 z-50 bg-white rounded-2xl shadow-2xl border border-gray-100 p-3 grid grid-cols-4 gap-2 w-[160px]">
-                {['🕌','🌙','⭐','📖','🤲','🌿','🕋','💎','🌸','🦋','🌺','🌟'].map(em => (
-                  <button key={em} type="button" onClick={() => updateFamilyIcon(em)}
-                    className="text-2xl w-9 h-9 rounded-xl hover:bg-gray-100 flex items-center justify-center transition-colors">
-                    {em}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
           <div>
             <p className="font-bold text-sm leading-tight">{family?.name || 'Family'} Group</p>
@@ -327,6 +416,26 @@ export default function ChatPage() {
           </button>
         </div>
       </div>
+      
+      {/* --- DAILY MISSION HEADER (Mini Goal) --- */}
+      {dailyMission && !missionLoading && (
+        <div className="relative px-4 pb-3 pt-1 batik-overlay border-t border-white/5 overflow-hidden">
+          {/* Main Container with Glassmorphism */}
+          <div className="absolute inset-0 bg-[#1a2408]/80 backdrop-blur-md" />
+          
+          <div className="relative bg-white/5 rounded-2xl px-4 py-3 border border-white/10 flex items-center gap-4 shadow-xl">
+            <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0 border border-white/10 shadow-inner">
+              <BookOpen size={20} className="text-yellow-400 drop-shadow-sm" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-white/40 font-bold uppercase tracking-[0.2em] mb-0.5">Today's Mission</p>
+              <p className="text-[13px] text-white font-semibold leading-snug">
+                {dailyMission.parent_override_text || dailyMission.generated_text}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Scrollable chat body */}
       <main className="flex-1 overflow-y-auto hide-scrollbar bg-[#E5DDD5] pb-[130px]">

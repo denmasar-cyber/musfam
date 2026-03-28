@@ -139,6 +139,12 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mission_completions' AND policyname='completions_insert') THEN
     CREATE POLICY completions_insert ON mission_completions FOR INSERT WITH CHECK (family_id = get_my_family_id());
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='mission_completions' AND policyname='completions_update') THEN
+    CREATE POLICY completions_update ON mission_completions FOR UPDATE USING (
+      family_id = get_my_family_id() AND 
+      EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('parent', 'guardian'))
+    );
+  END IF;
 END $$;
 
 -- ================================================================
@@ -754,6 +760,14 @@ ALTER TABLE rewards ADD COLUMN IF NOT EXISTS visible_to_child BOOLEAN DEFAULT TR
 -- Approval workflow columns
 ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved';
 ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS submitter_name TEXT;
+ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS guardian_name TEXT;
+ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS guardian_feedback TEXT;
+ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS proof_note TEXT;
+ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS date DATE DEFAULT CURRENT_DATE;
+ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS reflection_text TEXT;
+ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS approved_by TEXT;
+ALTER TABLE mission_completions ADD COLUMN IF NOT EXISTS parent_feedback TEXT;
 
 -- Policy: parents can update status (approve/reject)
 DO $$ BEGIN

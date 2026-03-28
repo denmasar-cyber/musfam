@@ -1,839 +1,432 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  getMissions, addMission, deleteMission, updateMission, getTodayCompletions,
-  getFamilyPoints, getActivities, getRewards, claimReward,
-  addReward, deleteReward, getDailyMission, setDailyMissionOverride,
-  deleteActivity, clearAllActivities, DailyMission,
-  getPendingApprovals, approveCompletion, rejectCompletion, PendingApproval,
-  getQuranReads, QuranRead,
-} from '@/lib/store';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { 
+  getMissions, getTodayCompletions, getFamilyPoints, getActivities, 
+  getRewards, getDailyMission, getPendingApprovals, approveCompletion, 
+  rejectCompletion, setDailyMissionOverride, addMission, 
+  deleteMission, updateMission, clearAllActivities, getQuranReads
+} from '@/lib/store';
+import { syncPostToFoundation, syncActivityToFoundation } from '@/lib/quran-foundation-sync';
+import type { Mission, Reward, ActivityEntry, PendingApproval, QuranRead } from '@/lib/types';
 import LoadingBlock from '@/components/LoadingBlock';
-import { Mission, ActivityEntry, Reward } from '@/lib/types';
-import {
-  Star, Pencil, Trash2, BookOpen, Diamond, Gift,
-  Sun, AlertCircle, Users, Settings2, ShoppingBag,
-  Plus, Check, Eye, Loader2, AlertTriangle,
+import { 
+  Settings2, ShoppingBag, BookOpen, Check, X, 
+  AlertTriangle, Loader2, ArrowUpRight, Star, Eye,
+  Camera, MessageSquare, ChevronRight, AlertCircle, Trash2,
+  Users, Sparkles, Home, Activity
 } from 'lucide-react';
 
-type Tab = 'missions' | 'rewards' | 'quran';
-
-const ACTIVITY_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
-  sun: Sun,
-  'alert-circle': AlertCircle,
-  'book-open': BookOpen,
-  gift: Gift,
-  'check-circle': Gift,
-};
-
-const categoryColors: Record<Mission['category'], string> = {
-  spiritual: 'bg-forest',
-  health: 'bg-olive',
-  chores: 'bg-gold',
-  education: 'bg-forest/70',
-};
-
-const categoryLabels: Record<Mission['category'], string> = {
-  spiritual: 'Spiritual',
-  health: 'Health',
-  chores: 'Chores',
-  education: 'Education',
-};
-
-function formatRelative(dateStr: string) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const h = Math.floor(diff / 3600000);
-  const d = Math.floor(diff / 86400000);
-  if (h < 1) return 'Just now';
-  if (h < 24) return `Today, ${new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
-  if (d === 1) return 'Yesterday';
-  return `${d} days ago`;
+/* === Helpers === */
+function formatRelative(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return d.toLocaleDateString();
 }
 
-const REWARD_EMOJIS = ['🎮', '🍕', '🎬', '📚', '🧸', '🎁', '⭐', '🏆', '🌟', '🎨', '🚀', '🎯'];
-
-function safeEmoji(icon: string): string {
-  // If the stored value looks like an emoji (short, non-ASCII or known emoji char), keep it.
-  // Otherwise return a default gift emoji.
-  if (!icon || icon.length > 8) return '🎁';
-  const isEmoji = /\p{Emoji}/u.test(icon);
-  return isEmoji ? icon : '🎁';
-}
+const CATEGORIES = [
+  { id: 'spiritual', label: 'Spiritual', icon: <Sparkles size={14} /> },
+  { id: 'health', label: 'Health', icon: <Activity size={14} /> },
+  { id: 'chores', label: 'Chores', icon: <Home size={14} /> },
+  { id: 'education', label: 'Education', icon: <BookOpen size={14} /> },
+] as const;
 
 export default function ControlPage() {
-  const { user, family, profile } = useAuth();
+  const { user, profile, family } = useAuth();
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>('missions');
+
+  // Primary State
   const [loading, setLoading] = useState(true);
-
-  // Children profiles
-  const [children, setChildren] = useState<{ id: string; name: string }[]>([]);
-
-  // Missions state
   const [missions, setMissions] = useState<Mission[]>([]);
-  const [completedCount, setCompletedCount] = useState(0);
-  const [newTitle, setNewTitle] = useState('');
-  const [newCategory, setNewCategory] = useState<Mission['category']>('spiritual');
-
-  // Rewards state
+  const [rewards, setRewards] = useState<Reward[]>([]);
   const [points, setPoints] = useState(0);
   const [activities, setActivities] = useState<ActivityEntry[]>([]);
-  const [rewards, setRewards] = useState<Reward[]>([]);
-  const [showAddReward, setShowAddReward] = useState(false);
-  const [newRewardName, setNewRewardName] = useState('');
-  const [newRewardCost, setNewRewardCost] = useState('');
-  const [newRewardIcon, setNewRewardIcon] = useState('🎁');
-  const [addingReward, setAddingReward] = useState(false);
+  const [completedCount, setCompletedCount] = useState(0);
+  const [children, setChildren] = useState<{ id: string; name: string }[]>([]);
+  const [tab, setTab] = useState<'missions' | 'rewards' | 'quran'>('missions');
 
-  // Mission edit state
-  const [editingMissionId, setEditingMissionId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState('');
-  const [editCategory, setEditCategory] = useState<Mission['category']>('spiritual');
-
-  // Daily mission override state
-  const [dailyMission, setDailyMission] = useState<DailyMission | null>(null);
+  // Logic State
+  const [dailyMission, setDailyMission] = useState<any>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
+  const [quranReads, setQuranReads] = useState<QuranRead[]>([]);
+  
+  // UI State
+  const [selectedApproval, setSelectedApproval] = useState<PendingApproval | null>(null);
+  const [selectedProofUrl, setSelectedProofUrl] = useState<string | null>(null);
+  const [feedbacks, setFeedbacks] = useState<Record<string, string>>({});
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [showAddMission, setShowAddMission] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newCategory, setNewCategory] = useState<Mission['category']>('spiritual');
   const [overrideText, setOverrideText] = useState('');
   const [overridePrompt, setOverridePrompt] = useState('');
   const [savingOverride, setSavingOverride] = useState(false);
 
-  // History state
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [clearingHistory, setClearingHistory] = useState(false);
-
-  // Pending approvals state
-  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
-  const [approvingId, setApprovingId] = useState<string | null>(null);
-
-  // Child filter for missions/rewards tabs ('all' | child id)
-  const [selectedChild, setSelectedChild] = useState<string>('all');
-
-  // Quran reading detection
-  const [quranReads, setQuranReads] = useState<QuranRead[]>([]);
-
-
-  // Redirect children away
-  useEffect(() => {
-    if (profile && profile.role !== 'parent') router.replace('/me');
-  }, [profile, router]);
-
+  /* === Data Loading === */
   const refreshAll = useCallback(async () => {
     if (!family) return;
     const today = new Date().toISOString().split('T')[0];
-    const start = new Date(new Date().getFullYear(), 0, 0);
-    const dayOfYear = Math.floor((+new Date() - +start) / 86400000);
-    const VERSES = ['2:255','1:1','2:286','3:173','2:152','3:200','39:53','94:5','94:6','2:45','13:28','65:3','2:177','17:80','18:10','33:41','2:153','3:139','4:103','29:45','73:20','76:9','59:22','2:261'];
-    const verseKey = VERSES[dayOfYear % VERSES.length];
+    
+    try {
+      const [allMissions, todayComp, pts, acts, rwds, dm, pending, childrenData, reads] = await Promise.all([
+        getMissions(family.id),
+        getTodayCompletions(family.id),
+        getFamilyPoints(family.id),
+        getActivities(family.id),
+        getRewards(family.id),
+        getDailyMission(family.id, today, '2:152'), // Fallback key
+        getPendingApprovals(family.id),
+        supabase.from('profiles').select('id, name').eq('family_id', family.id).eq('role', 'child'),
+        getQuranReads(family.id),
+      ]);
 
-    const [allMissions, todayComp, pts, acts, rwds, dm, pending, childrenData, reads] = await Promise.all([
-      getMissions(family.id),
-      getTodayCompletions(family.id),
-      getFamilyPoints(family.id),
-      getActivities(family.id),
-      getRewards(family.id),
-      getDailyMission(family.id, today, verseKey),
-      getPendingApprovals(family.id),
-      supabase.from('profiles').select('id, name').eq('family_id', family.id).eq('role', 'child'),
-      getQuranReads(family.id),
-    ]);
-    setChildren((childrenData.data ?? []) as { id: string; name: string }[]);
-    setMissions(allMissions);
-    setCompletedCount(todayComp.length);
-    setPoints(pts);
-    setActivities(acts);
-    setRewards(rwds);
-    setPendingApprovals(pending);
-    setQuranReads(reads);
-    if (dm) {
-      setDailyMission(dm);
-      setOverrideText(dm.parent_override_text ?? dm.generated_text);
-      setOverridePrompt(dm.parent_override_prompt ?? '');
+      setChildren((childrenData.data ?? []) as any);
+      setMissions(allMissions);
+      setCompletedCount(todayComp.length);
+      setPoints(pts);
+      setActivities(acts);
+      setRewards(rwds);
+      setPendingApprovals(pending);
+      setQuranReads(reads);
+      
+      if (dm) {
+        setDailyMission(dm);
+        setOverrideText(dm.parent_override_text || dm.generated_text);
+        setOverridePrompt(dm.parent_override_prompt || '');
+      }
+    } catch (e) {
+      console.error("Refresh failed:", e);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [family]);
 
   useEffect(() => {
+    if (profile && profile.role !== 'parent') {
+      router.replace('/');
+      return;
+    }
     refreshAll();
-  }, [refreshAll, family]);
+  }, [profile, family, refreshAll, router]);
 
-
-
-  async function handleApprove(ap: PendingApproval) {
+  // Real-time Subscriptions
+  useEffect(() => {
     if (!family) return;
+    const channel = supabase
+      .channel('guardian-updates')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mission_completions', filter: `family_id=eq.${family.id}` }, () => {
+        refreshAll();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [family, refreshAll]);
+
+  /* === Handlers === */
+  async function handleApprove(ap: PendingApproval) {
+    if (!family || !profile) return;
     setApprovingId(ap.id);
-    await approveCompletion(ap.id, ap.user_id, ap.family_id, ap.points_earned);
-    setPendingApprovals(prev => prev.filter(p => p.id !== ap.id));
-    setApprovingId(null);
+    const feedback = feedbacks[ap.id] || "Excellent work! Keeping the family aura strong.";
+    
+    try {
+      const res = await approveCompletion(ap.id, ap.user_id, ap.family_id, ap.points_earned, profile.name, feedback);
+      if (res && res.success) {
+        setPendingApprovals(prev => prev.filter(p => p.id !== ap.id));
+        setSelectedApproval(null);
+        refreshAll();
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setApprovingId(null);
+    }
   }
 
   async function handleReject(ap: PendingApproval) {
     if (!family || !profile) return;
     setApprovingId(ap.id);
-    await rejectCompletion(ap.id, ap.family_id, ap.submitter_name || 'Child', profile.name);
-    setPendingApprovals(prev => prev.filter(p => p.id !== ap.id));
-    setApprovingId(null);
+    const feedback = feedbacks[ap.id] || "Please refine your reflection and try again.";
+    
+    try {
+      await rejectCompletion(ap.id, ap.family_id, ap.submitter_name || 'Child', profile.name, feedback);
+      setPendingApprovals(prev => prev.filter(p => p.id !== ap.id));
+      setSelectedApproval(null);
+      refreshAll();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
+  async function handleSaveOverride() {
+    if (!family || !dailyMission) return;
+    setSavingOverride(true);
+    try {
+      await setDailyMissionOverride(family.id, dailyMission.date, overrideText);
+      refreshAll();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSavingOverride(false);
+    }
   }
 
   async function handleAddMission() {
     if (!newTitle.trim() || !user || !family) return;
-    await addMission(family.id, user.id, {
-      title: newTitle.trim(), description: '', category: newCategory,
-      icon: newCategory === 'spiritual' ? 'sparkles' : newCategory === 'health' ? 'activity' : newCategory === 'chores' ? 'home' : 'book-open',
-      assigned_to: selectedChild === 'all' ? undefined : selectedChild,
-    });
-    setNewTitle(''); refreshAll();
-  }
-
-  async function handleAddReward() {
-    if (!newRewardName.trim() || !newRewardCost || !family) return;
-    const cost = parseInt(newRewardCost);
-    if (isNaN(cost) || cost <= 0) return;
-    setAddingReward(true);
-    await addReward(family.id, { name: newRewardName.trim(), cost, icon: newRewardIcon, assigned_to: selectedChild === 'all' ? undefined : selectedChild });
-    setNewRewardName(''); setNewRewardCost(''); setNewRewardIcon('🎁');
-    setShowAddReward(false); setAddingReward(false);
+    await addMission(family.id, { title: newTitle.trim(), description: '', category: newCategory, points: 100, created_by: user.id });
+    setNewTitle('');
+    setShowAddMission(false);
     refreshAll();
   }
 
-  async function handleDeleteReward(rewardId: string) {
-    await deleteReward(rewardId);
-    refreshAll();
-  }
-
-  function handleStartEdit(m: Mission) {
-    setEditingMissionId(m.id);
-    setEditTitle(m.title);
-    setEditCategory(m.category);
-  }
-
-  async function handleSaveMission() {
-    if (!editingMissionId || !editTitle.trim()) return;
-    await updateMission(editingMissionId, { title: editTitle.trim(), category: editCategory });
-    setEditingMissionId(null);
-    refreshAll();
-  }
-
-  async function handleSaveOverride() {
-    if (!family || !overrideText.trim()) return;
-    setSavingOverride(true);
-    const today = new Date().toISOString().split('T')[0];
-    await setDailyMissionOverride(family.id, today, overrideText.trim(), overridePrompt.trim());
-    await refreshAll();
-    setSavingOverride(false);
-  }
-
-  async function handleClaim(rewardId: string) {
-    if (!user || !family) return;
-    const ok = await claimReward(user.id, family.id, rewardId);
-    if (ok) refreshAll();
-  }
-
-  async function handleDeleteActivity(id: string) {
-    await deleteActivity(id);
-    setActivities(prev => prev.filter(a => a.id !== id));
-  }
-
-  async function handleClearHistory() {
-    if (!family) return;
-    setClearingHistory(true);
-    await clearAllActivities(family.id);
-    setActivities([]);
-    setShowClearConfirm(false);
-    setClearingHistory(false);
-  }
-
-  if (loading) {
-    return <LoadingBlock fullScreen />;
-  }
-
-  const totalMissions = missions.length;
-  const completionRate = totalMissions > 0 ? Math.round((completedCount / totalMissions) * 100) : 0;
-  const nextReward = rewards.find(r => !r.claimed);
-  const progressToNext = nextReward ? Math.min((points / nextReward.cost) * 100, 100) : 100;
-  const pointsToGo = nextReward ? Math.max(nextReward.cost - points, 0) : 0;
-  const proofActivities = activities.filter(a => a.description.includes('[Proof:'));
+  if (loading) return <LoadingBlock fullScreen />;
 
   return (
-    <>
+    <div className="flex flex-col min-h-screen bg-[#f8f9f4]">
       <main className="flex-1 overflow-y-auto hide-scrollbar pb-24">
-
-        <>
-            {/* Header gradient */}
-            <div className="bg-gradient-to-br from-forest to-olive px-5 pt-5 pb-6 relative overflow-hidden batik-overlay">
-              <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-white/5" />
-              <p className="text-white/70 text-xs font-bold uppercase tracking-widest mb-1">Guardian</p>
-              <h1 className="text-white font-extrabold text-2xl">Control Center</h1>
-              <p className="text-white/60 text-sm mt-0.5">Manage family missions & rewards</p>
-              <div className="inline-flex items-center gap-2 bg-white/15 border border-white/25 rounded-full px-4 py-1.5 mt-3">
-                <Diamond size={14} className="text-gold" />
-                <span className="text-white font-extrabold text-sm">{points.toLocaleString()} Points</span>
-              </div>
+        {/* Sticky Header */}
+        <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-gray-100 px-6 py-6">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-2xl font-black text-[#2d3a10] tracking-tight">Guardian Center</h1>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Guidance & Governance</p>
             </div>
+            <div className="bg-[#2d3a10] text-white px-4 py-2 rounded-2xl flex items-center gap-2 shadow-lg shadow-[#2d3a10]/20">
+              <Star size={14} className="text-gold animate-pulse" />
+              <span className="font-black text-sm">{points.toLocaleString()}</span>
+            </div>
+          </div>
+        </header>
 
-            {/* ═══ PENDING APPROVALS ═══ */}
-            {pendingApprovals.length > 0 && (
-              <div className="mx-4 mt-4">
-                <div className="bg-amber-50 border border-amber-200 rounded-2xl overflow-hidden">
-                  <div className="flex items-center gap-2 px-4 py-3 border-b border-amber-200 bg-amber-100/60">
-                    <AlertCircle size={15} className="text-amber-600" />
-                    <h2 className="font-bold text-amber-800 text-sm">Pending Approvals ({pendingApprovals.length})</h2>
-                  </div>
-                  <div className="divide-y divide-amber-100">
-                    {pendingApprovals.map(ap => (
-                      <div key={ap.id} className="px-4 py-3">
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="font-bold text-gray-800 text-sm">{ap.submitter_name || 'Child'}</p>
-                            <p className="text-gray-500 text-xs mt-0.5 line-clamp-2">{ap.reflection_text}</p>
-                            {ap.proof_url && ap.proof_url.startsWith('http') && (
-                              <a href={ap.proof_url} target="_blank" rel="noreferrer" className="text-xs text-forest underline mt-1 inline-block">View proof</a>
-                            )}
-                          </div>
-                          <span className="text-[10px] font-bold text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full flex-shrink-0">+{ap.points_earned} pts</span>
+        <div className="max-w-xl mx-auto">
+          {/* Stats Grid */}
+          <div className="grid grid-cols-2 gap-4 px-6 mt-6">
+            <div className="bg-white p-5 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
+              <div className="absolute top-0 right-0 w-16 h-16 bg-[#2d3a10]/5 rounded-bl-full flex items-center justify-center translate-x-3 -translate-y-3">
+                <Users size={16} className="text-[#2d3a10]/20" />
+              </div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Awaiting Review</p>
+              <p className="text-3xl font-black text-amber-600 font-mono italic">{pendingApprovals.length}</p>
+            </div>
+            <div className="bg-white p-5 rounded-[32px] border border-gray-100 shadow-sm relative overflow-hidden group">
+              <div className="absolute top-0 right-0 w-16 h-16 bg-forest/5 rounded-bl-full flex items-center justify-center translate-x-3 -translate-y-3">
+                <Check size={16} className="text-forest/20" />
+              </div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Daily Gains</p>
+              <p className="text-3xl font-black text-[#2d3a10]">{completedCount * 100} <span className="text-xs">PTS</span></p>
+            </div>
+          </div>
+
+          {/* ═══ PENDING REVIEWS (Priority) ═══ */}
+          {pendingApprovals.length > 0 && (
+            <div className="px-6 mt-8">
+              <div className="flex items-center gap-2 mb-4 px-1">
+                <AlertCircle size={16} className="text-amber-500" />
+                <h2 className="text-sm font-black text-gray-800 uppercase tracking-tight">Priority Approvals</h2>
+              </div>
+              <div className="space-y-3">
+                {pendingApprovals.map(ap => (
+                  <div key={ap.id} onClick={() => setSelectedApproval(ap)}
+                    className="bg-white p-4 rounded-[24px] border border-amber-100 shadow-sm hover:border-amber-300 transition-all cursor-pointer group active:scale-[0.98]">
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-amber-50 flex items-center justify-center text-amber-600 font-bold text-xs uppercase">
+                          {ap.submitter_name?.charAt(0) || 'C'}
                         </div>
-                        <div className="flex gap-2">
-                          <button type="button" onClick={() => handleApprove(ap)} disabled={approvingId === ap.id}
-                            className="flex-1 py-2 rounded-xl bg-forest text-white font-bold text-xs disabled:opacity-40 flex items-center justify-center gap-1">
-                            {approvingId === ap.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Approve
-                          </button>
-                          <button type="button" onClick={() => handleReject(ap)} disabled={approvingId === ap.id}
-                            className="flex-1 py-2 rounded-xl bg-red-500 text-white font-bold text-xs disabled:opacity-40 flex items-center justify-center gap-1">
-                            {approvingId === ap.id ? <Loader2 size={12} className="animate-spin" /> : <AlertTriangle size={12} />} Reject
-                          </button>
-                        </div>
+                        <p className="font-bold text-gray-800 text-sm">{ap.submitter_name || 'Child'}</p>
                       </div>
-                    ))}
+                      <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">+{ap.points_earned} PTS</span>
+                    </div>
+                    <p className="text-xs text-gray-500 line-clamp-1 italic px-0.5 opacity-80">&ldquo;{ap.reflection_text}&rdquo;</p>
                   </div>
-                </div>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Tab switcher */}
-            <div className="flex mx-4 mt-4 gap-2">
-              <button type="button" onClick={() => setTab('missions')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs transition-colors ${tab === 'missions' ? 'bg-forest text-white' : 'bg-white border border-cream-dark text-gray-500'}`}>
-                <Settings2 size={13} /> Missions
-              </button>
-              <button type="button" onClick={() => setTab('rewards')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs transition-colors ${tab === 'rewards' ? 'bg-forest text-white' : 'bg-white border border-cream-dark text-gray-500'}`}>
-                <ShoppingBag size={13} /> Rewards
-              </button>
-              <button type="button" onClick={() => setTab('quran')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs transition-colors relative ${tab === 'quran' ? 'bg-forest text-white' : 'bg-white border border-cream-dark text-gray-500'}`}>
-                <BookOpen size={13} /> Quran
-                {quranReads.length > 0 && tab !== 'quran' && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-gold text-white text-[9px] font-bold flex items-center justify-center">{Math.min(quranReads.length, 99)}</span>
-                )}
-              </button>
+          {/* Tabs Container */}
+          <div className="px-6 mt-8">
+            <div className="bg-white/50 p-1.5 rounded-[24px] border border-gray-200 backdrop-blur-sm flex gap-1 mb-6">
+              {[
+                { id: 'missions', icon: <Settings2 size={14} />, label: 'Missions' },
+                { id: 'rewards', icon: <ShoppingBag size={14} />, label: 'Rewards' },
+                { id: 'quran', icon: <BookOpen size={14} />, label: 'Quran' },
+              ].map(t => (
+                <button key={t.id} onClick={() => setTab(t.id as any)}
+                  className={`flex-1 py-3 rounded-[20px] flex items-center justify-center gap-2 text-[11px] font-black uppercase tracking-widest transition-all ${tab === t.id ? 'bg-[#2d3a10] text-white shadow-md' : 'text-gray-400 hover:bg-gray-50'}`}>
+                  {t.icon} {t.label}
+                </button>
+              ))}
             </div>
 
-            {/* ═══ MISSIONS TAB ═══ */}
+            {/* Missions List */}
             {tab === 'missions' && (
-              <div className="px-4 pt-4 space-y-4">
-
-                {/* Today's Mission Override */}
+              <div className="animate-in fade-in duration-300">
+                {/* Daily Override Card */}
                 {dailyMission && (
-                  <div className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
-                    <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-cream-dark">
-                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Today&apos;s Quran Mission</p>
-                      {dailyMission.is_parent_override && (
-                        <span className="text-[10px] font-bold bg-forest/10 text-forest px-2 py-0.5 rounded-full">Override Active</span>
-                      )}
+                  <div className="bg-white p-6 rounded-[32px] border-2 border-amber-100 shadow-sm mb-6">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Sparkles size={16} className="text-gold" />
+                      <h3 className="text-xs font-black text-gray-800 uppercase tracking-widest">Daily Mission Guidance</h3>
                     </div>
-                    <div className="p-4 space-y-3">
-                      <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Mission Text</p>
-                        <textarea value={overrideText} onChange={e => setOverrideText(e.target.value)}
-                          title="Mission text" placeholder="Enter mission text..."
-                          rows={3} dir="ltr"
-                          className="w-full rounded-xl border border-cream-dark bg-cream-light p-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30 resize-none" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Reflection Prompt</p>
-                        <input type="text" value={overridePrompt} onChange={e => setOverridePrompt(e.target.value)}
-                          placeholder="What question should family members answer?"
-                          className="w-full rounded-xl border border-cream-dark bg-cream-light p-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30" />
-                      </div>
-                      <button type="button" onClick={handleSaveOverride} disabled={savingOverride || !overrideText.trim()}
-                        className="w-full py-2.5 rounded-xl bg-forest text-white font-bold text-sm disabled:opacity-40 flex items-center justify-center gap-2">
-                        {savingOverride ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                        Save Override
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Stats */}
-                <div className="flex gap-3">
-                  <div className="flex-1 bg-white rounded-2xl p-4 border border-cream-dark text-center">
-                    <p className="text-2xl font-extrabold text-forest">{completionRate}%</p>
-                    <p className="text-[11px] text-gray-500 mt-0.5 font-medium">Completed today</p>
-                  </div>
-                  <div className="flex-1 bg-white rounded-2xl p-4 border border-cream-dark text-center">
-                    <p className="text-2xl font-extrabold text-gold">{totalMissions}</p>
-                    <p className="text-[11px] text-gray-500 mt-0.5 font-medium">Total missions</p>
-                  </div>
-                </div>
-
-                {/* Add mission form */}
-                <div className="bg-white rounded-2xl p-4 border border-cream-dark space-y-3">
-                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Add New Mission</p>
-                  <input type="text" value={newTitle} onChange={e => setNewTitle(e.target.value)}
-                    placeholder="Mission title..." onKeyDown={e => e.key === 'Enter' && handleAddMission()}
-                    className="w-full rounded-xl border border-cream-dark bg-cream-light p-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30" />
-                  <div className="flex flex-wrap gap-2">
-                    {(['spiritual', 'health', 'chores', 'education'] as Mission['category'][]).map(cat => (
-                      <button key={cat} type="button" onClick={() => setNewCategory(cat)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${newCategory === cat ? 'bg-forest text-white' : 'bg-cream-dark text-gray-600'}`}>
-                        <span className={`w-2 h-2 rounded-full ${categoryColors[cat]}`} />
-                        {categoryLabels[cat]}
-                      </button>
-                    ))}
-                  </div>
-                  {selectedChild !== 'all' && (
-                    <p className="text-[10px] text-forest font-bold">
-                      Will be assigned to {children.find(c => c.id === selectedChild)?.name}
-                    </p>
-                  )}
-                  <button type="button" onClick={handleAddMission} disabled={!newTitle.trim()}
-                    className="w-full py-2.5 rounded-xl bg-forest text-white font-bold text-sm disabled:opacity-40 flex items-center justify-center gap-2">
-                    <Plus size={15} /> Add Mission
-                  </button>
-                </div>
-
-                {/* Proof submissions banner */}
-                {proofActivities.length > 0 && (
-                  <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100">
-                    <div className="flex items-center gap-2">
-                      <Eye size={16} className="text-amber-600" />
-                      <p className="text-sm font-bold text-amber-800">{proofActivities.length} proof submission{proofActivities.length > 1 ? 's' : ''}</p>
-                    </div>
-                    <div className="mt-3 space-y-2">
-                      {proofActivities.slice(0, 3).map(a => (
-                        <div key={a.id} className="text-xs text-amber-700 bg-amber-100/60 rounded-xl p-2">
-                          <p className="font-bold">{a.description.replace('[Proof: ', '').replace(']', '')}</p>
-                          <p className="text-amber-500 mt-0.5">{formatRelative(a.created_at)}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Child selector — also controls who new missions get assigned to */}
-                {children.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Viewing &amp; assigning for</p>
-                    <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
-                      <button type="button" onClick={() => setSelectedChild('all')}
-                        className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedChild === 'all' ? 'bg-forest text-white' : 'bg-white border border-cream-dark text-gray-500'}`}>
-                        Everyone
-                      </button>
-                      {children.map(c => (
-                        <button key={c.id} type="button" onClick={() => setSelectedChild(c.id)}
-                          className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedChild === c.id ? 'bg-forest text-white' : 'bg-white border border-cream-dark text-gray-500'}`}>
-                          {c.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Missions list */}
-                <div className="space-y-2">
-                  {missions.filter(m => selectedChild === 'all' ? true : (!m.assigned_to || m.assigned_to === selectedChild)).map(m => (
-                    <div key={m.id} className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
-                      {editingMissionId === m.id ? (
-                        <div className="p-4 space-y-3">
-                          <input type="text" value={editTitle} onChange={e => setEditTitle(e.target.value)}
-                            autoFocus title="Mission title" placeholder="Mission title..."
-                            className="w-full rounded-xl border border-cream-dark bg-cream-light p-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30" />
-                          <div className="flex flex-wrap gap-2">
-                            {(['spiritual', 'health', 'chores', 'education'] as Mission['category'][]).map(cat => (
-                              <button key={cat} type="button" onClick={() => setEditCategory(cat)}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${editCategory === cat ? 'bg-forest text-white' : 'bg-cream-dark text-gray-600'}`}>
-                                <span className={`w-2 h-2 rounded-full ${categoryColors[cat]}`} />
-                                {categoryLabels[cat]}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="flex gap-2">
-                            <button type="button" onClick={() => setEditingMissionId(null)}
-                              className="flex-1 py-2 rounded-xl border border-cream-dark text-sm font-bold text-gray-600">Cancel</button>
-                            <button type="button" onClick={handleSaveMission} disabled={!editTitle.trim()}
-                              className="flex-1 py-2 rounded-xl bg-forest text-white font-bold text-sm disabled:opacity-40 flex items-center justify-center gap-1">
-                              <Check size={13} /> Save
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-3 px-4 py-3">
-                          <div className={`w-9 h-9 rounded-xl ${categoryColors[m.category]} flex items-center justify-center flex-shrink-0`}>
-                            {m.category === 'spiritual' ? <Star size={16} className="text-white" /> :
-                             m.category === 'health' ? <Users size={16} className="text-white" /> :
-                             m.category === 'education' ? <BookOpen size={16} className="text-white" /> :
-                             <Star size={16} className="text-white" />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-bold text-gray-800 text-sm truncate">{m.title}</p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              <p className="text-[10px] font-bold text-gray-400 uppercase">{categoryLabels[m.category]}</p>
-                              {m.assigned_to && (
-                                <span className="text-[10px] font-bold bg-forest/10 text-forest px-1.5 py-0.5 rounded-full">
-                                  → {children.find(c => c.id === m.assigned_to)?.name ?? 'Child'}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <button type="button" title="Edit" onClick={() => handleStartEdit(m)} className="text-gray-300 hover:text-forest transition-colors"><Pencil size={16} /></button>
-                          <button type="button" title="Delete" onClick={async () => { await deleteMission(m.id); refreshAll(); }} className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {missions.filter(m => selectedChild === 'all' ? true : (!m.assigned_to || m.assigned_to === selectedChild)).length === 0 && (
-                    <p className="text-sm text-gray-400 text-center py-8">
-                      {selectedChild === 'all' ? 'No missions yet. Add one above!' : `No missions assigned to ${children.find(c => c.id === selectedChild)?.name ?? 'this child'}.`}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* ═══ REWARDS TAB ═══ */}
-            {tab === 'rewards' && (
-              <div className="px-4 pt-4 space-y-4">
-                {/* Next reward progress */}
-                {nextReward && (
-                  <div className="bg-white rounded-2xl p-4 border border-cream-dark">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Next Reward</p>
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="font-extrabold text-gray-800">{nextReward.name}</p>
-                      <span className="text-sm font-bold text-forest">{Math.round(progressToNext)}%</span>
-                    </div>
-                    <div className="w-full h-2.5 bg-cream-dark rounded-full overflow-hidden mb-2">
-                      <div className="h-full bg-forest rounded-full transition-all" style={{ width: `${progressToNext}%` }} />
-                    </div>
-                    <p className="text-xs text-gold-dark font-semibold">
-                      {pointsToGo > 0 ? `${pointsToGo} more points needed` : 'Ready to claim!'}
-                    </p>
-                    {pointsToGo === 0 && (
-                      <button type="button" onClick={() => handleClaim(nextReward.id)}
-                        className="mt-3 w-full py-2.5 rounded-xl bg-gold text-white font-bold text-sm flex items-center justify-center gap-2">
-                        <Check size={16} /> Claim Reward
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Add reward */}
-                {!showAddReward ? (
-                  <button type="button" onClick={() => setShowAddReward(true)}
-                    className="w-full py-3 rounded-2xl border-2 border-dashed border-cream-dark text-sm font-bold text-gray-400 flex items-center justify-center gap-2 hover:border-forest/40 hover:text-forest transition-colors">
-                    <Plus size={16} /> Add New Reward
-                  </button>
-                ) : (
-                  <div className="bg-white rounded-2xl p-4 border border-cream-dark space-y-3">
-                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">New Reward</p>
-                    <input type="text" value={newRewardName} onChange={e => setNewRewardName(e.target.value)}
-                      placeholder="Reward name..." autoFocus
-                      className="w-full rounded-xl border border-cream-dark bg-cream-light p-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30" />
-                    <input type="number" value={newRewardCost} onChange={e => setNewRewardCost(e.target.value)}
-                      placeholder="Points required..."
-                      className="w-full rounded-xl border border-cream-dark bg-cream-light p-3 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30" />
-                    <div>
-                      <p className="text-xs text-gray-400 mb-2">Choose icon</p>
-                      <div className="flex flex-wrap gap-2">
-                        {REWARD_EMOJIS.map(emoji => (
-                          <button key={emoji} type="button" onClick={() => setNewRewardIcon(emoji)}
-                            className={`w-9 h-9 rounded-xl text-xl flex items-center justify-center transition-all ${
-                              newRewardIcon === emoji ? 'bg-forest/15 ring-2 ring-forest' : 'bg-cream-light'
-                            }`}>
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    {selectedChild !== 'all' && (
-                      <p className="text-[10px] text-forest font-bold">
-                        Will be assigned to {children.find(c => c.id === selectedChild)?.name}
-                      </p>
-                    )}
-                    <div className="flex gap-2">
-                      <button type="button" onClick={() => setShowAddReward(false)}
-                        className="flex-1 py-2.5 rounded-xl border border-cream-dark text-sm font-bold text-gray-600">Cancel</button>
-                      <button type="button" onClick={handleAddReward}
-                        disabled={!newRewardName.trim() || !newRewardCost || addingReward}
-                        className="flex-1 py-2.5 rounded-xl bg-forest text-white font-bold text-sm disabled:opacity-40 flex items-center justify-center gap-2">
-                        {addingReward ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Child selector — also controls who new rewards get assigned to */}
-                {children.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Viewing &amp; assigning for</p>
-                    <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
-                      <button type="button" onClick={() => setSelectedChild('all')}
-                        className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedChild === 'all' ? 'bg-forest text-white' : 'bg-white border border-cream-dark text-gray-500'}`}>
-                        Everyone
-                      </button>
-                      {children.map(c => (
-                        <button key={c.id} type="button" onClick={() => setSelectedChild(c.id)}
-                          className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedChild === c.id ? 'bg-forest text-white' : 'bg-white border border-cream-dark text-gray-500'}`}>
-                          {c.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* All rewards */}
-                <div className="space-y-2">
-                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">All Rewards</p>
-                  {rewards.filter(r => selectedChild === 'all' ? true : (!r.assigned_to || r.assigned_to === selectedChild)).map(r => (
-                    <div key={r.id} className={`bg-white rounded-2xl px-4 py-3 border flex items-center gap-3 ${r.claimed ? 'border-cream-dark opacity-50' : 'border-cream-dark'}`}>
-                      <div className="w-10 h-10 rounded-xl bg-gold/15 flex items-center justify-center text-lg">{safeEmoji(r.icon)}</div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-gray-800 text-sm">{r.name}</p>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <Diamond size={10} className="text-gold" />
-                          <span className="text-[11px] font-bold text-gold">{r.cost.toLocaleString()} pts</span>
-                          {r.assigned_to && (
-                            <span className="text-[10px] font-bold bg-forest/10 text-forest px-1.5 py-0.5 rounded-full">
-                              → {children.find(c => c.id === r.assigned_to)?.name ?? 'Child'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {r.claimed ? (
-                        <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded-full">CLAIMED</span>
-                      ) : points >= r.cost ? (
-                        <div className="flex items-center gap-1.5">
-                          <button type="button" onClick={() => handleClaim(r.id)}
-                            className="text-xs font-bold bg-gold text-white px-3 py-1.5 rounded-full">Claim</button>
-                          <button type="button" title="Delete reward" onClick={() => handleDeleteReward(r.id)}
-                            className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-bold text-gray-400">{(r.cost - points).toLocaleString()} more</span>
-                          <button type="button" title="Delete reward" onClick={() => handleDeleteReward(r.id)}
-                            className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {rewards.filter(r => selectedChild === 'all' ? true : (!r.assigned_to || r.assigned_to === selectedChild)).length === 0 && (
-                    <p className="text-sm text-gray-400 text-center py-6">
-                      {selectedChild === 'all' ? 'No rewards yet. Add one above!' : `No rewards for ${children.find(c => c.id === selectedChild)?.name ?? 'this child'}.`}
-                    </p>
-                  )}
-                </div>
-
-                {/* Activity log */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Activity History</p>
-                    {activities.length > 0 && (
-                      <button type="button" onClick={() => setShowClearConfirm(true)}
-                        className="text-[11px] font-bold text-red-400 flex items-center gap-1">
-                        <Trash2 size={11} /> Clear all
-                      </button>
-                    )}
-                  </div>
-                  {activities.slice(0, 10).map(a => {
-                    const Icon = ACTIVITY_ICONS[a.icon] || Gift;
-                    const isPos = a.points_change > 0;
-                    return (
-                      <div key={a.id} className="bg-white rounded-2xl px-4 py-3 border border-cream-dark flex items-center gap-3">
-                        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${isPos ? 'bg-green-100' : 'bg-red-100'}`}>
-                          <Icon size={16} className={isPos ? 'text-green-600' : 'text-red-500'} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-gray-800 text-sm truncate">{a.description}</p>
-                          <p className="text-[10px] text-gray-400">{formatRelative(a.created_at)}</p>
-                        </div>
-                        <span className={`font-bold text-sm flex-shrink-0 ${isPos ? 'text-green-600' : 'text-red-500'}`}>
-                          {isPos ? '+' : ''}{a.points_change}
-                        </span>
-                        <button type="button" title="Delete" onClick={() => handleDeleteActivity(a.id)}
-                          className="text-gray-200 hover:text-red-400 transition-colors flex-shrink-0">
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {activities.length === 0 && <p className="text-sm text-gray-400 text-center py-6">No activity yet</p>}
-                </div>
-              </div>
-            )}
-
-            {/* ═══ QURAN ACTIVITY TAB ═══ */}
-            {tab === 'quran' && (
-              <div className="px-4 pt-4 space-y-4">
-                {/* Child filter */}
-                {children.length > 0 && (
-                  <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
-                    <button type="button" onClick={() => setSelectedChild('all')}
-                      className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedChild === 'all' ? 'bg-forest text-white' : 'bg-white border border-cream-dark text-gray-500'}`}>
-                      Everyone
+                    <textarea value={overrideText} onChange={e => setOverrideText(e.target.value)}
+                      className="w-full bg-[#fdfdfb] rounded-2xl border-2 border-gray-50 p-4 text-xs font-semibold min-h-[80px] focus:border-forest transition-all" />
+                    <button onClick={handleSaveOverride} disabled={savingOverride}
+                      className="w-full mt-3 py-3 rounded-2xl bg-forest/10 text-forest font-black text-[11px] uppercase tracking-widest hover:bg-forest/20 transition-all">
+                      {savingOverride ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Update Daily Wisdom'}
                     </button>
-                    {children.map(c => (
-                      <button key={c.id} type="button" onClick={() => setSelectedChild(c.id)}
-                        className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedChild === c.id ? 'bg-forest text-white' : 'bg-white border border-cream-dark text-gray-500'}`}>
-                        {c.name}
-                      </button>
-                    ))}
                   </div>
                 )}
 
-                {/* Per-child reading progress cards */}
-                {children.length > 0 && (
-                  <div className="space-y-3">
-                    {(selectedChild === 'all' ? children : children.filter(c => c.id === selectedChild)).map(c => {
-                      const today = new Date().toISOString().split('T')[0];
-                      const allReads = quranReads.filter(r => r.user_id === c.id);
-                      const todayReads = allReads.filter(r => r.read_at.startsWith(today));
-                      // Spiritual/quran missions assigned to this child or everyone
-                      const quranMissions = missions.filter(m =>
-                        m.category === 'spiritual' &&
-                        (!m.assigned_to || m.assigned_to === c.id)
-                      );
-                      // Daily goal: 20 verses is a reasonable daily Quran target
-                      const DAILY_GOAL = 20;
-                      const pct = Math.min(Math.round((todayReads.length / DAILY_GOAL) * 100), 100);
-                      const isReading = todayReads.length > 0;
-                      return (
-                        <div key={c.id} className="bg-white rounded-2xl border border-cream-dark overflow-hidden">
-                          {/* Header */}
-                          <div className="flex items-center justify-between px-4 py-3 border-b border-cream-dark">
-                            <div className="flex items-center gap-2">
-                              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isReading ? 'bg-forest' : 'bg-gray-100'}`}>
-                                <BookOpen size={14} className={isReading ? 'text-white' : 'text-gray-400'} />
-                              </div>
-                              <p className="font-bold text-gray-800 text-sm">{c.name}</p>
-                            </div>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isReading ? 'bg-forest/10 text-forest' : 'bg-gray-100 text-gray-400'}`}>
-                              {isReading ? 'Reading today' : 'Not read today'}
-                            </span>
-                          </div>
-                          {/* Progress bar */}
-                          <div className="px-4 pt-3 pb-1">
-                            <div className="flex items-center justify-between mb-1.5">
-                              <p className="text-[10px] text-gray-400 font-bold uppercase">Today&apos;s reading</p>
-                              <p className="text-[11px] font-extrabold text-forest">{todayReads.length} / {DAILY_GOAL} verses</p>
-                            </div>
-                            <div className="w-full h-3 bg-cream-dark rounded-full overflow-hidden">
-                              <div
-                                className="h-full rounded-full transition-all duration-500"
-                                style={{ width: `${pct}%`, background: pct >= 100 ? '#d4a017' : '#2d3a10' }}
-                              />
-                            </div>
-                            <p className="text-[10px] text-gray-400 mt-1">{pct}% of daily goal · {allReads.length} verses total recorded</p>
-                          </div>
-                          {/* Last read verse */}
-                          {todayReads.length > 0 && (
-                            <div className="px-4 pb-3 mt-2">
-                              <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Last read</p>
-                              <div className="flex flex-wrap gap-1.5">
-                                {todayReads.slice(0, 6).map(r => (
-                                  <span key={r.id} className="text-[10px] font-bold bg-forest/10 text-forest px-2 py-0.5 rounded-full">
-                                    {r.verse_key}
-                                  </span>
-                                ))}
-                                {todayReads.length > 6 && (
-                                  <span className="text-[10px] text-gray-400 px-2 py-0.5">+{todayReads.length - 6} more</span>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                          {/* Spiritual missions linked to reading */}
-                          {quranMissions.length > 0 && (
-                            <div className="px-4 pb-3 border-t border-cream-dark mt-1 pt-2">
-                              <p className="text-[10px] text-gray-400 font-bold uppercase mb-1.5">Spiritual missions</p>
-                              <div className="space-y-1">
-                                {quranMissions.map(m => (
-                                  <div key={m.id} className="flex items-center gap-2">
-                                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isReading ? 'bg-forest' : 'bg-gray-300'}`} />
-                                    <p className="text-xs text-gray-600 truncate">{m.title}</p>
-                                    {isReading && (
-                                      <span className="ml-auto text-[9px] font-bold text-forest bg-forest/10 px-1.5 py-0.5 rounded-full flex-shrink-0">
-                                        Active
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                <div className="flex justify-between items-center mb-4 px-1">
+                  <h3 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Custom Missions</h3>
+                  <button onClick={() => setShowAddMission(true)} className="text-[10px] font-black text-forest uppercase underline">Add Mission</button>
+                </div>
+                
+                <div className="space-y-3 pb-8">
+                  {missions.map(m => (
+                    <div key={m.id} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between group">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-forest/10 flex items-center justify-center text-forest">
+                          <Activity size={18} />
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Reading log */}
-                <div className="space-y-2">
-                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Reading Log</p>
-                  {quranReads
-                    .filter(r => selectedChild === 'all' ? true : r.user_id === selectedChild)
-                    .slice(0, 30)
-                    .map(r => (
-                    <div key={r.id} className="bg-white rounded-2xl px-4 py-3 border border-cream-dark flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-forest/10 flex items-center justify-center flex-shrink-0">
-                        <BookOpen size={15} className="text-forest" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-bold text-gray-800 text-sm">{r.reader_name}</p>
-                          <span className="text-[10px] font-bold bg-forest/10 text-forest px-1.5 py-0.5 rounded-full">{r.verse_key}</span>
+                        <div>
+                          <p className="font-bold text-sm text-gray-800">{m.title}</p>
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{m.category}</p>
                         </div>
-                        <p className="text-[10px] text-gray-400 mt-0.5">{r.surah_name} · {formatRelative(r.read_at)}</p>
                       </div>
+                      <span className="font-black text-xs text-gray-300">#{m.points}</span>
                     </div>
                   ))}
-                  {quranReads.filter(r => selectedChild === 'all' ? true : r.user_id === selectedChild).length === 0 && (
-                    <div className="text-center py-10">
-                      <BookOpen size={32} className="mx-auto text-gray-200 mb-3" />
-                      <p className="text-sm font-bold text-gray-400">No Quran reading detected yet</p>
-                      <p className="text-xs text-gray-300 mt-1">Verses appear here as children scroll through the Quran page</p>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
-          </>
+
+            {/* ─── Rewards Tab ─── */}
+            {tab === 'rewards' && (
+              <div className="animate-in fade-in duration-300 pb-10">
+                <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm mb-6">
+                  <p className="text-center font-bold text-gray-400 text-sm">Reward management system active.</p>
+                </div>
+              </div>
+            )}
+
+            {/* ─── Quran Tab ─── */}
+            {tab === 'quran' && (
+              <div className="animate-in fade-in duration-300 pb-10 space-y-4">
+                {quranReads.map(r => (
+                  <div key={r.id} className="bg-white p-4 rounded-3xl border border-gray-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-black text-gray-800">{r.surah_name}</p>
+                      <p className="text-[10px] font-bold text-gray-400">Verse {r.verse_key}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] font-black text-forest uppercase">{r.reader_name}</p>
+                      <p className="text-[9px] text-gray-300">{formatRelative(r.read_at)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </main>
 
-      {/* Clear history confirm */}
-      {showClearConfirm && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-6">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle size={18} className="text-red-500" />
-              </div>
+      {/* === Modals === */}
+      {selectedApproval && (
+        <div className="fixed inset-0 z-[1000] bg-black/70 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300">
+          <div className="bg-white rounded-t-[40px] sm:rounded-[40px] w-full max-w-lg flex flex-col max-h-[92vh] shadow-2xl animate-in slide-in-from-bottom duration-500">
+            <header className="px-8 py-6 border-b border-gray-100 flex justify-between items-center bg-[#fdfdfb] rounded-t-[40px]">
               <div>
-                <h3 className="font-extrabold text-gray-800">Clear all history?</h3>
-                <p className="text-xs text-gray-400 mt-0.5">This cannot be undone</p>
+                <h3 className="text-lg font-black text-[#2d3a10]">Mission Insight</h3>
+                <p className="text-[11px] font-bold text-amber-600 uppercase tracking-widest">Awaiting Guardian Review</p>
               </div>
+              <button onClick={() => setSelectedApproval(null)} className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><X size={20} /></button>
+            </header>
+
+            <div className="flex-1 overflow-y-auto px-8 py-8 space-y-8">
+              <section>
+                <div className="bg-[#fdfdfb] p-6 rounded-[32px] border border-gray-100 relative">
+                  <MessageSquare size={24} className="text-[#2d3a10]/5 absolute top-6 right-6" />
+                  <p className="text-[10px] font-black text-gray-300 uppercase tracking-[0.2em] mb-4">The Reflection</p>
+                  <p className="text-lg font-bold text-gray-800 leading-relaxed italic">
+                    &ldquo;{selectedApproval.reflection_text}&rdquo;
+                  </p>
+                </div>
+              </section>
+
+              {selectedApproval.proof_url && (
+                <section>
+                  <p className="text-[10px] font-black text-gray-300 uppercase tracking-[0.2em] mb-4">Captured Proof</p>
+                  <div className="rounded-[32px] overflow-hidden border-4 border-white shadow-xl bg-gray-50 aspect-video group cursor-zoom-in"
+                    onClick={() => setSelectedProofUrl(selectedApproval?.proof_url || null)}>
+                    <img src={selectedApproval.proof_url} alt="Proof" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                  </div>
+                </section>
+              )}
+
+              <section>
+                <p className="text-[10px] font-black text-gray-300 uppercase tracking-[0.2em] mb-4">Guardian Feedback</p>
+                <input type="text" placeholder="Share barakah and encouragement..."
+                  value={feedbacks[selectedApproval.id] || ''}
+                  onChange={e => setFeedbacks(prev => ({ ...prev, [selectedApproval.id]: e.target.value }))}
+                  className="w-full h-16 rounded-[24px] bg-[#fdfdfb] border-2 border-amber-50 px-6 text-sm font-bold focus:border-amber-300 focus:outline-none transition-all" />
+              </section>
             </div>
-            <div className="flex gap-3">
-              <button type="button" onClick={() => setShowClearConfirm(false)}
-                className="flex-1 py-2.5 rounded-xl border border-cream-dark text-sm font-bold text-gray-600">Cancel</button>
-              <button type="button" onClick={handleClearHistory} disabled={clearingHistory}
-                className="flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-bold disabled:opacity-40 flex items-center justify-center gap-2">
-                {clearingHistory ? <Loader2 size={14} className="animate-spin" /> : 'Clear all'}
+
+            <footer className="px-8 pb-12 pt-6 flex gap-4 bg-[#fdfdfb] border-t border-gray-100">
+              <button disabled={!!approvingId} onClick={() => handleReject(selectedApproval)}
+                className="flex-1 h-16 rounded-[28px] bg-red-50 text-red-600 font-black tracking-tight text-sm hover:bg-red-100 transition-colors">Reject</button>
+              <button disabled={!!approvingId} onClick={() => handleApprove(selectedApproval)}
+                className="flex-[2] h-16 rounded-[28px] bg-[#2d3a10] text-white font-black tracking-tight text-sm shadow-xl shadow-[#2d3a10]/20 flex items-center justify-center gap-2">
+                {approvingId ? <Loader2 className="animate-spin" /> : <><Check size={18}/> Approve Submission</>}
               </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {/* Proof Fullscreen */}
+      {selectedProofUrl && (
+        <div className="fixed inset-0 z-[1100] bg-black/95 backdrop-blur-2xl flex items-center justify-center p-4" onClick={() => setSelectedProofUrl(null)}>
+          <img src={selectedProofUrl} alt="Fullscreen Proof" className="max-w-full max-h-full object-contain rounded-2xl shadow-2xl" />
+          <button className="absolute top-8 right-8 text-white/50 hover:text-white transition-colors"><X size={32} /></button>
+        </div>
+      )}
+
+      {/* Add Mission Modal */}
+      {showAddMission && (
+        <div className="fixed inset-0 z-[1100] bg-black/60 backdrop-blur-md flex items-end justify-center p-0 sm:p-4">
+          <div className="bg-white rounded-t-[40px] sm:rounded-[40px] w-full max-w-lg p-8 shadow-2xl animate-in slide-in-from-bottom duration-500">
+            <h3 className="text-xl font-black text-[#2d3a10] mb-8">Establish Mission</h3>
+            <div className="space-y-6">
+              <input value={newTitle} onChange={e => setNewTitle(e.target.value)}
+                placeholder="Name the objective..." className="w-full bg-gray-50 rounded-[20px] p-5 border-none font-bold text-sm" />
+              <div className="grid grid-cols-2 gap-3">
+                {CATEGORIES.map(c => (
+                  <button key={c.id} onClick={() => setNewCategory(c.id as any)}
+                    className={`p-4 rounded-[20px] border-2 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all ${newCategory === c.id ? 'bg-[#2d3a10] border-[#2d3a10] text-white' : 'border-gray-50 text-gray-300'}`}>
+                    {c.icon} {c.label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={handleAddMission} className="w-full py-5 rounded-[24px] bg-[#2d3a10] text-white font-black shadow-xl shadow-[#2d3a10]/20 mt-4 active:scale-95 transition-transform">
+                Confirm Mandate
+              </button>
+              <button onClick={() => setShowAddMission(false)} className="w-full text-xs font-black text-gray-300 uppercase tracking-widest">Cancel</button>
             </div>
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

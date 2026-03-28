@@ -290,46 +290,61 @@ export default function MePage() {
 
   async function saveAvatar(url: string) {
     if (!user) return;
-    setSavingAvatar(true);
-    const cleanUrl = url.trim();
-    await supabase.from('profiles').update({ avatar_url: cleanUrl || null }).eq('id', user.id);
-    setAvatarUrl(cleanUrl || null);
-    setShowAvatarPicker(false);
-    setSavingAvatar(false);
+    try {
+      setSavingAvatar(true);
+      const cleanUrl = url.trim();
+      await supabase.from('profiles').update({ avatar_url: cleanUrl || null }).eq('id', user.id);
+      setAvatarUrl(cleanUrl || null);
+      setShowAvatarPicker(false);
+    } catch (err) {
+      console.error("Avatar save err:", err);
+    } finally {
+      setSavingAvatar(false);
+    }
   }
 
   async function uploadAvatarFile(file: File) {
     if (!user) return;
-    setSavingAvatar(true);
-    const ext = file.name.split('.').pop() || 'jpg';
-    const path = `${user.id}.${ext}`;
-    const { data: uploadData, error } = await supabase.storage
-      .from('avatars')
-      .upload(path, file, { upsert: true, contentType: file.type });
-    if (error) {
-      console.error('Avatar upload error:', error.message);
-      setSavingAvatar(false);
-      return;
-    }
-    if (uploadData) {
-      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
-      if (urlData?.publicUrl) {
-        await supabase.from('profiles').update({ avatar_url: urlData.publicUrl }).eq('id', user.id);
-        setAvatarUrl(urlData.publicUrl);
-        await refreshProfile();
-        setShowAvatarPicker(false);
+    try {
+      setSavingAvatar(true);
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `${user.id}.${ext}`;
+      const { data: uploadData, error } = await supabase.storage
+        .from('avatars')
+        .upload(path, file, { upsert: true, contentType: file.type });
+      
+      if (error) {
+        console.error('Avatar upload error:', error.message);
+        return;
       }
+      if (uploadData) {
+        const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+        if (urlData?.publicUrl) {
+          await supabase.from('profiles').update({ avatar_url: urlData.publicUrl }).eq('id', user.id);
+          setAvatarUrl(urlData.publicUrl);
+          await refreshProfile();
+          setShowAvatarPicker(false);
+        }
+      }
+    } catch (err) {
+      console.error("Critical upload error:", err);
+    } finally {
+      setSavingAvatar(false);
     }
-    setSavingAvatar(false);
   }
 
   async function saveName() {
     if (!user || !nameInput.trim()) return;
-    setSavingName(true);
-    await supabase.from('profiles').update({ name: nameInput.trim() }).eq('id', user.id);
-    await refreshProfile();
-    setEditingName(false);
-    setSavingName(false);
+    try {
+      setSavingName(true);
+      await supabase.from('profiles').update({ name: nameInput.trim() }).eq('id', user.id);
+      await refreshProfile();
+      setEditingName(false);
+    } catch (err) {
+      console.error("Name save err:", err);
+    } finally {
+      setSavingName(false);
+    }
   }
 
 
@@ -453,7 +468,7 @@ export default function MePage() {
 
         {/* ===== ISLAMIC AURA CARD (Visa-style) ===== */}
         <div
-          className="relative overflow-hidden cursor-pointer active:scale-[0.98] transition-transform select-none"
+          className="relative overflow-hidden cursor-pointer active:scale-[0.98] transition-transform select-none batik-overlay"
           style={{
             background: currentLevel.card === 'black'
               ? 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 40%, #0f0f0f 100%)'
