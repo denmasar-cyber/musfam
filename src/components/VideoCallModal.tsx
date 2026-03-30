@@ -177,7 +177,7 @@ export default function VideoCallModal({
   useEffect(() => {
     if (typeof window !== 'undefined') {
        const a = new Audio('https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3');
-       a.loop = true;
+       a.loop = false; // AS REQUESTED: Ring once
        a.preload = 'auto';
        ringtoneRef.current = a;
     }
@@ -427,6 +427,13 @@ export default function VideoCallModal({
                 window.addEventListener('click', playOnInteract);
              });
           }
+
+          // AS REQUESTED: Broadcast presence to the chat UI that a call is happening
+          const pIv = setInterval(() => {
+             ch.send({ type: 'broadcast', event: 'presence', payload: { from: userId } });
+          }, 5000);
+          
+          (window as any)._presenceIv = pIv;
         }
       });
     }
@@ -434,6 +441,7 @@ export default function VideoCallModal({
     return () => {
       cancelled = true;
       if (timerRef.current) clearInterval(timerRef.current);
+      if ((window as any)._presenceIv) clearInterval((window as any)._presenceIv);
       ringtoneRef.current?.pause();
       screenStreamRef.current?.getTracks().forEach(t => t.stop());
       localStreamRef.current?.getTracks().forEach(t => t.stop());

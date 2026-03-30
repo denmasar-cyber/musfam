@@ -90,13 +90,14 @@ export default function ChatPage() {
   const [clearingChat, setClearingChat] = useState(false);
   const [showVideoCall, setShowVideoCall] = useState(false);
   const [incomingCall, setIncomingCall] = useState<IncomingCallInfo | null>(null);
+  const [activeCallers, setActiveCallers] = useState<Record<string, number>>({}); // uid -> timestamp
   const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // PRE-INITIALIZE AUDIO FOR MOBILE COMPATIBILITY (bypasses some HP blocks)
   useEffect(() => {
     if (typeof window !== 'undefined') {
        const a = new Audio('https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3');
-       a.loop = true;
+       a.loop = false; // AS REQUESTED: Ring only once, no loop
        a.preload = 'auto';
        ringtoneAudioRef.current = a;
     }
@@ -197,12 +198,14 @@ export default function ChatPage() {
            if (payload.callerId === user?.id) return;
            setIncomingCall(payload as IncomingCallInfo);
            
+           // Auto-clear incoming call notification after 8 seconds
+           window.setTimeout(() => setIncomingCall(null), 8500);
+
            // Fire-and-forget play attempt
            if (ringtoneAudioRef.current) {
               ringtoneAudioRef.current.currentTime = 0;
               ringtoneAudioRef.current.play().catch((err) => {
                  console.warn('HP/PC blocked autoplay. Waiting for first interaction.', err);
-                 // HP SAFARI FIX: Any touch will trigger the audio if it was blocked
                  const playOnFirstTouch = () => {
                     ringtoneAudioRef.current?.play().catch(() => {});
                     window.removeEventListener('pointerdown', playOnFirstTouch);
@@ -210,6 +213,17 @@ export default function ChatPage() {
                  window.addEventListener('pointerdown', playOnFirstTouch);
               });
            }
+        })
+        .on('broadcast', { event: 'presence' }, ({ payload }) => {
+           // TRACK ACTIVE CALLERS: Clean stale entries
+           const now = Date.now();
+           const from = payload.from as string;
+           setActiveCallers(prev => {
+              const next: Record<string, number> = { ...prev, [from]: now };
+              // Remove IDs older than 12 seconds
+              Object.keys(next).forEach(k => { if (now - next[k] > 12000) delete next[k]; });
+              return next;
+           });
         })
         .subscribe()
     ];
@@ -497,9 +511,16 @@ export default function ChatPage() {
           <div>
             <p className="font-bold text-sm leading-tight">{family?.name || 'Family'} Group</p>
             <p className="text-[10px] text-white/65 leading-tight">
-              {onlineMembers.length > 0
-                ? onlineMembers.map(m => m.name.split(' ')[0]).join(', ')
-                : 'Loading members...'}
+              {Object.keys(activeCallers).length > 0 ? (
+                <span className="text-green-400 font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                  Video Call Active ({Object.keys(activeCallers).length + (showVideoCall ? 1 : 0)})
+                </span>
+              ) : (
+                onlineMembers.length > 0
+                  ? onlineMembers.map(m => m.name.split(' ')[0]).join(', ')
+                  : 'Loading members...'
+              )}
             </p>
           </div>
         </div>
