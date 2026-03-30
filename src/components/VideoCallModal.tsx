@@ -239,7 +239,8 @@ export default function VideoCallModal({
     return `${m}:${sec}`;
   };
 
-  const sigChannel = `video-call-${channelName}`;
+  // UNIFIED CHANNEL NAME: MATCHES THE CHAT PAGE LISTENER
+  const sigChannel = `family_calls_${channelName}`;
 
   const sendSignal = useCallback((to: string, type: string, payload: unknown) => {
     channelRef.current?.send({
@@ -429,9 +430,9 @@ export default function VideoCallModal({
           }
 
           // AS REQUESTED: Broadcast presence to the chat UI that a call is happening
-          const pIv = setInterval(() => {
-             ch.send({ type: 'broadcast', event: 'presence', payload: { from: userId } });
-          }, 5000);
+          const sendPresence = () => ch.send({ type: 'broadcast', event: 'presence', payload: { from: userId } });
+          sendPresence(); // Send immediately on join
+          const pIv = setInterval(sendPresence, 3500);
           
           (window as any)._presenceIv = pIv;
         }
