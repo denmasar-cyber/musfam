@@ -196,23 +196,9 @@ export default function ChatPage() {
       supabase.channel(`family_calls_${family.id}`)
         .on('broadcast', { event: 'incoming_call' }, ({ payload }) => {
            if (payload.callerId === user?.id) return;
+           // AS REQUESTED: Only show UI inform, NO ringtone for other members
            setIncomingCall(payload as IncomingCallInfo);
-           
-           // Auto-clear incoming call notification after 8 seconds
            window.setTimeout(() => setIncomingCall(null), 8500);
-
-           // Fire-and-forget play attempt
-           if (ringtoneAudioRef.current) {
-              ringtoneAudioRef.current.currentTime = 0;
-              ringtoneAudioRef.current.play().catch((err) => {
-                 console.warn('HP/PC blocked autoplay. Waiting for first interaction.', err);
-                 const playOnFirstTouch = () => {
-                    ringtoneAudioRef.current?.play().catch(() => {});
-                    window.removeEventListener('pointerdown', playOnFirstTouch);
-                 };
-                 window.addEventListener('pointerdown', playOnFirstTouch);
-              });
-           }
         })
         .on('broadcast', { event: 'presence' }, ({ payload }) => {
            // TRACK ACTIVE CALLERS: Clean stale entries
@@ -501,10 +487,17 @@ export default function ChatPage() {
           )}
           {!showVideoCall && Object.keys(activeCallers).length === 0 && (
             <button type="button" title="Video Call" 
-              onClick={() => {
+              onClick={async () => {
                 setShowVideoCall(true);
                 if (family && user && profile) {
-                  supabase.channel(`family_calls_${family.id}`).send({
+                  // 1. Play one-shot ringtone ONLY for the initiator
+                  if (ringtoneAudioRef.current) {
+                     ringtoneAudioRef.current.currentTime = 0;
+                     ringtoneAudioRef.current.play().catch(() => {});
+                  }
+
+                  // 2. Broadcast incoming call to trigger Join button for others
+                  await supabase.channel(`family_calls_${family.id}`).send({
                     type: 'broadcast',
                     event: 'incoming_call',
                     payload: {
@@ -513,6 +506,16 @@ export default function ChatPage() {
                       channelName: family.id,
                       callerId: user.id
                     }
+                  });
+
+                  // 3. AS REQUESTED: Send Chat Inform (Message in Chat)
+                  const sessionMsg = `🔴 **Video call has started**\n*Click "Join Call" in the group header to participate.*`;
+                  await supabase.from('family_messages').insert({ 
+                    family_id: family.id, 
+                    user_id: user.id, 
+                    sender_name: 'Musfam Assistant', 
+                    sender_role: 'guardian', 
+                    content: sessionMsg 
                   });
                 }
               }}

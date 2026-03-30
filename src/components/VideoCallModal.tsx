@@ -419,17 +419,7 @@ export default function VideoCallModal({
           setConnecting(false);
           timerRef.current = setInterval(() => setDuration(d => d + 1), 1000);
 
-          // HP/Laptop SAFARI FIX: Reset ringer and play on connection
-          if (ringtoneRef.current) {
-             ringtoneRef.current.currentTime = 0;
-             ringtoneRef.current.play().catch((err) => {
-                console.warn('Caller ringtone blocked:', err);
-                const playOnInteract = () => { ringtoneRef.current?.play().catch(() => {}); window.removeEventListener('click', playOnInteract); };
-                window.addEventListener('click', playOnInteract);
-             });
-          }
-
-          // AS REQUESTED: Broadcast presence to the chat UI that a call is happening
+          // AS REQUESTED: Broadcast presence heartbeats
           const sendPresence = () => ch.send({ type: 'broadcast', event: 'presence', payload: { from: userId } });
           sendPresence(); // Send immediately on join
           const pIv = setInterval(sendPresence, 3500);
