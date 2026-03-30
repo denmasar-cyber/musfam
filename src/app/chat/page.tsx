@@ -419,40 +419,6 @@ export default function ChatPage() {
         />
       )}
 
-      {/* Incoming Call UI */}
-      {incomingCall && (
-        <div className="fixed inset-0 z-[1000] bg-black/90 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
-          <div className="relative mb-8">
-            <div className="absolute inset-0 bg-[#5a6b28] rounded-full animate-ping opacity-20" style={{ animationDuration: '2s' }} />
-            <div className="w-28 h-28 rounded-full bg-[#2d3a10] border-4 border-[#5a6b28]/30 flex items-center justify-center text-4xl font-black text-white relative z-10 shadow-[0_0_40px_rgba(45,58,16,0.3)]">
-              {incomingCall.callerName[0].toUpperCase()}
-            </div>
-          </div>
-          <p className="text-white text-3xl font-black mb-2">{incomingCall.callerName}</p>
-          <p className="text-white/50 text-sm font-extrabold uppercase tracking-[0.2em] mb-12">Incoming Call from {family?.name}</p>
-          
-          <div className="flex gap-14">
-            <button 
-              onClick={() => {
-                ringtoneAudioRef.current?.pause();
-                setIncomingCall(null);
-              }}
-              className="w-20 h-20 rounded-full bg-red-500 flex items-center justify-center shadow-[0_8px_30px_rgba(239,68,68,0.4)] active:scale-95 transition-all">
-              <PhoneOff className="text-white" size={28} />
-            </button>
-            <button 
-              onClick={() => {
-                ringtoneAudioRef.current?.pause();
-                setIncomingCall(null);
-                setShowVideoCall(true);
-              }}
-              className="w-20 h-20 rounded-full bg-green-500 flex items-center justify-center shadow-[0_8px_30px_rgba(34,197,94,0.4)] animate-bounce active:scale-95 transition-all">
-              <Video className="text-white" size={28} />
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Chat header (z-100 to stay above messages) */}
       <div className="relative bg-[#2d3a10] text-white px-3 py-2.5 flex items-center justify-between shadow-sm flex-shrink-0 z-[100] overflow-visible batik-overlay rounded-none">
         
@@ -512,9 +478,9 @@ export default function ChatPage() {
             <p className="font-bold text-sm leading-tight">{family?.name || 'Family'} Group</p>
             <p className="text-[10px] text-white/65 leading-tight">
               {Object.keys(activeCallers).length > 0 ? (
-                <span className="text-green-400 font-bold flex items-center gap-1">
+                <span className="text-green-400 font-bold flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                  Video Call Active ({Object.keys(activeCallers).length + (showVideoCall ? 1 : 0)})
+                  Live Call ({Object.keys(activeCallers).length + (showVideoCall ? 1 : 0)})
                 </span>
               ) : (
                 onlineMembers.length > 0
@@ -525,25 +491,35 @@ export default function ChatPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" title="Video Call" 
-            onClick={() => {
-              setShowVideoCall(true);
-              if (family && user && profile) {
-                supabase.channel(`family_calls_${family.id}`).send({
-                  type: 'broadcast',
-                  event: 'incoming_call',
-                  payload: {
-                    callerName: profile.name,
-                    familyName: family.name,
-                    channelName: family.id,
-                    callerId: user.id
-                  }
-                });
-              }
-            }}
-            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
-            <Video size={16} className="text-white/90" />
-          </button>
+          {Object.keys(activeCallers).length > 0 && !showVideoCall && (
+            <button 
+              type="button" 
+              onClick={() => setShowVideoCall(true)}
+              className="bg-green-500 text-white text-[10px] font-black uppercase px-3 py-1.5 rounded-lg shadow-lg active:scale-95 transition-all flex items-center gap-1.5 animate-in slide-in-from-right-4">
+              <Video size={12} /> Join Call
+            </button>
+          )}
+          {!showVideoCall && Object.keys(activeCallers).length === 0 && (
+            <button type="button" title="Video Call" 
+              onClick={() => {
+                setShowVideoCall(true);
+                if (family && user && profile) {
+                  supabase.channel(`family_calls_${family.id}`).send({
+                    type: 'broadcast',
+                    event: 'incoming_call',
+                    payload: {
+                      callerName: profile.name,
+                      familyName: family.name,
+                      channelName: family.id,
+                      callerId: user.id
+                    }
+                  });
+                }
+              }}
+              className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
+              <Video size={16} className="text-white/90" />
+            </button>
+          )}
           <button type="button" title="Clear chat" onClick={() => setConfirmClearMyChat(true)}
             className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
             <Trash2 size={15} className="text-white/80" />
