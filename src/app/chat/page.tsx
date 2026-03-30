@@ -183,10 +183,14 @@ export default function ChatPage() {
            if (payload.callerId === user?.id) return;
            setIncomingCall(payload as IncomingCallInfo);
            
-           const ringObj = new Audio('https://cdn.pixabay.com/audio/2022/03/10/audio_c3527058c0.mp3');
+           const audioUrl = 'https://www.soundjay.com/phone/sounds/phone-calling-1.mp3';
+           const ringObj = new Audio();
+           ringObj.src = audioUrl;
            ringObj.loop = true;
-           ringObj.play().catch(() => {
-             const playOnInteract = () => { ringObj.play(); window.removeEventListener('click', playOnInteract); };
+           ringObj.load();
+           ringObj.play().catch((err) => {
+             console.warn('Ringtone play failed, waiting for interaction:', err);
+             const playOnInteract = () => { ringObj.play().catch(() => {}); window.removeEventListener('click', playOnInteract); };
              window.addEventListener('click', playOnInteract);
            });
            ringtoneAudioRef.current = ringObj;
