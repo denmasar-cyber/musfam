@@ -342,6 +342,8 @@ export default function ChatPage() {
           userId={user?.id || 'anon'}
           displayName={profile?.name || 'You'}
           familyName={family?.name || 'Family'}
+          userRole={profile?.role}
+          familyId={family?.id}
           onClose={() => setShowVideoCall(false)}
         />
       )}

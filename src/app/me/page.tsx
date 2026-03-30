@@ -414,7 +414,7 @@ export default function MePage() {
 
   return (
     <>
-      <main className="flex-1 overflow-y-auto hide-scrollbar px-4 py-4 space-y-4 pb-24 page-enter">
+      <main className="flex-1 overflow-y-auto hide-scrollbar px-4 py-4 space-y-4 safe-pb page-enter">
 
         {/* ===== AVATAR ROW ===== */}
         <div className="flex items-center gap-4">
@@ -706,7 +706,7 @@ export default function MePage() {
           </div>
           <div className="flex-1 text-left">
             <p className="text-sm font-bold text-gray-700">About Musfam</p>
-            <p className="text-[11px] text-gray-400">Fajr Al-Garuda · v1.0</p>
+            <p className="text-[11px] text-gray-400">Mother & Son · v1.0</p>
           </div>
           <ChevronRight size={16} className="text-gray-300" />
         </button>
@@ -860,7 +860,7 @@ export default function MePage() {
           {
             label: 'Developer',
             icon: '🦅',
-            title: 'Fajr Al-Garuda',
+            title: 'Mother & Son',
             subtitle: 'A Product of',
             body: 'The dawn of the archipelago — soaring to split the sky for the benefit of the Ummah, from Indonesia to the world.',
           },

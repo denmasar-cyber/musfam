@@ -916,7 +916,7 @@ export default function QuranPage() {
         preload="none"
       />
 
-      <main ref={scrollRef} className="flex-1 overflow-y-auto hide-scrollbar pb-24 page-enter">
+      <main ref={scrollRef} className="flex-1 overflow-y-auto hide-scrollbar safe-pb page-enter">
 
         {/* ════ READING VIEW ════ */}
         {view === 'reading' ? (

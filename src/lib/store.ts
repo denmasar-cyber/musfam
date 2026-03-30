@@ -63,14 +63,22 @@ export async function hasCompletedDailyMission(userId: string, familyId: string,
   return (count || 0) > 0;
 }
 
-export async function completeMission(userId: string, familyId: string, missionId: string, date: string, isDaily: boolean, proofUrl?: string, proofNote?: string, points?: number, reflectionText?: string, userRole?: string) {
+export async function completeMission(userId: string, family_id: string, missionId: string, date: string, isDaily: boolean, proofUrl?: string, proofNote?: string, points?: number, reflectionText?: string, userRole?: string) {
   // 🛡️ ELITE APPROVAL LOGIC: Parents are auto-approved, children are pending guardian review
   const status = (userRole === 'parent' || userRole === 'guardian') ? 'approved' : 'pending';
+
+  // 🛡️ DUPLICATE DRILL: Ensure we don't submit twice for the same mission today
+  const existingQuery = supabase.from('mission_completions').select('id').eq('user_id', userId).eq('date', date).in('status', ['approved', 'pending']);
+  if (isDaily) existingQuery.eq('daily_mission_id', missionId);
+  else existingQuery.eq('mission_id', missionId);
+  
+  const { data: existing } = await existingQuery.maybeSingle();
+  if (existing) return { data: existing, error: null };
 
   // 🛡️ HYBRID SYNC: Record the log in Supabase, but the SPIRITUAL TRUTH is in the Cloud
   const { data, error } = await supabase.from('mission_completions').insert({
     user_id: userId,
-    family_id: familyId,
+    family_id,
     mission_id: isDaily ? null : missionId,
     daily_mission_id: isDaily ? missionId : null,
     date,
@@ -78,7 +86,8 @@ export async function completeMission(userId: string, familyId: string, missionI
     proof_url: proofUrl,
     proof_note: proofNote,
     points_earned: points || (isDaily ? 100 : 50),
-    reflection_text: reflectionText
+    reflection_text: reflectionText,
+    submitter_name: userRole === 'parent' ? 'Parent' : 'Child'
   }).select().single();
 
   if (!error && data) {
@@ -86,11 +95,17 @@ export async function completeMission(userId: string, familyId: string, missionI
     const activityDesc = isDaily ? `Daily Mission Progress` : `Task Achievement`;
     const syncText = status === 'approved' ? `✅ **Verified!** ${activityDesc}` : `⏳ **Action Logged!** ${activityDesc}`;
     
-    await syncPostToFoundation(`${syncText}\n\n*Synced via Musfam Ecosystem Proxy*${reflectionText ? `\n\n📝 "${reflectionText}"` : ''}`, familyId);
+    await syncPostToFoundation(`${syncText}\n\n*Synced via Musfam Ecosystem Proxy*${reflectionText ? `\n\n📝 "${reflectionText}"` : ''}`, family_id);
     
     if (status === 'approved') {
        if (!isDaily) await syncGoalProgressToFoundation(missionId, 1);
        await syncActivityToFoundation(activityDesc, data.points_earned);
+
+       // 🛡️ POINT PRECISION: Auto-award points for parents/guardians
+       const { data: current } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', family_id).maybeSingle();
+       await supabase.from('points').update({ 
+         total_points: (current?.total_points || 0) + data.points_earned 
+       }).eq('user_id', userId).eq('family_id', family_id);
     }
   }
 
@@ -102,13 +117,22 @@ export async function completeCustomMission(userId: string, familyId: string, mi
 }
 
 export async function uploadProofImage(userId: string, file: File) {
-  // 🛡️ CLOUDINARY SYNC: The "Tanpa Ribet" Storage Solution
-  // This circumvents the 'Bucket not found' error forever.
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', 'musfam_proofs'); 
+  // 🛡️ STORAGE SHIFT: Prioritize Supabase for reliability unless Cloudinary is configured
+  const ext = file.name.split('.').pop() || 'jpg';
+  const path = `${userId}/${Date.now()}.${ext}`;
   
   try {
+    const { data: uploadData, error } = await supabase.storage.from('proof-images').upload(path, file);
+    if (uploadData) {
+      const { data: { publicUrl } } = supabase.storage.from('proof-images').getPublicUrl(path);
+      return { publicUrl };
+    }
+    
+    // Fallback if Supabase fails (e.g. bucket issues)
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', 'musfam_proofs'); 
+    
     const res = await fetch(`https://api.cloudinary.com/v1_1/demo/image/upload`, {
       method: 'POST',
       body: formData,
@@ -118,13 +142,7 @@ export async function uploadProofImage(userId: string, file: File) {
     if (data.error) throw new Error(data.error.message);
     return { publicUrl: data.secure_url };
   } catch (err: any) {
-    // Fallback to Supabase (proof-images bucket from supabase-complete.sql)
-    const ext = file.name.split('.').pop() || 'jpg';
-    const path = `${userId}/${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from('proof-images').upload(path, file);
-    if (error) return { error };
-    const { data: { publicUrl } } = supabase.storage.from('proof-images').getPublicUrl(path);
-    return { publicUrl };
+    return { error: err.message || 'Upload failed' };
   }
 }
 

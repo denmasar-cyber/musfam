@@ -30,6 +30,7 @@ body {
 /* Large green areas (headers, hero, full containers) → gunungan Jawa */
 .batik-overlay {
   position: relative;
+  overflow: hidden;
 }
 .batik-overlay::after {
   content: '';
@@ -44,8 +45,6 @@ body {
   mix-blend-mode: soft-light;
   z-index: 0;
   border-radius: inherit;
-  /* Clip the background to the element's border box without clipping children */
-  overflow: hidden; 
 }
 /* Wait, overflow: hidden on ::after doesn't work for its content. 
    I'll use a wrapper div usually, but for now I'll just remove it. */
@@ -165,6 +164,29 @@ body {
 }
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/* ── Responsive Utils ───────────────────────────────────────────────── */
+
+.safe-pb {
+  padding-bottom: calc(env(safe-area-inset-bottom, 20px) + 80px);
+}
+
+.max-w-mobile {
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Fix for buttons potentially being hidden */
+button, a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-height: 700px) {
+  .hero-glow::before, .hero-glow::after {
+    display: none;
+  }
 }
 
 .hero-glow::before {

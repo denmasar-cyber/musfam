@@ -684,7 +684,7 @@ export default function HomePage() {
         onTouchStart={ptr.handleTouchStart}
         onTouchMove={ptr.handleTouchMove}
         onTouchEnd={ptr.handleTouchEnd}
-        className="flex-1 overflow-y-auto hide-scrollbar pb-24 page-enter relative"
+        className="flex-1 overflow-y-auto hide-scrollbar safe-pb page-enter relative"
       >
         {/* Pull-to-Refresh Indicator (Cooldown UI) */}
         <div 
@@ -848,7 +848,7 @@ export default function HomePage() {
                   &ldquo;{verseOfDay.translation}&rdquo;
                 </p>
 
-                {/* Tafsir toggle ΓÇö QF Tafsir API */}
+                {/* Tafsir toggle — QF Tafsir API */}
                 {tafsirText && (
                   <div className="mt-3">
                     <button
@@ -906,7 +906,7 @@ export default function HomePage() {
             </button>
           </div>
 
-          {/* ΓöÇΓöÇ MISSIONS TAB ΓöÇΓöÇ */}
+          {/* — MISSIONS TAB — */}
           {dashTab === 'missions' && (
             <div className="space-y-3">
               {/* Daily Quran Mission */}

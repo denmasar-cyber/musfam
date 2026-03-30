@@ -30,6 +30,8 @@ interface VideoCallModalProps {
   userId: string;
   displayName: string;
   familyName: string;
+  userRole?: 'parent' | 'child' | 'guardian';
+  familyId?: string;
   onClose: () => void;
 }
 
@@ -141,6 +143,8 @@ export default function VideoCallModal({
   userId,
   displayName,
   familyName,
+  userRole,
+  familyId,
   onClose,
 }: VideoCallModalProps) {
   const [micOn, setMicOn] = useState(true);
@@ -163,6 +167,8 @@ export default function VideoCallModal({
   const [todos, setTodos] = useState<CallTodo[]>([]);
   const [todoInput, setTodoInput] = useState('');
   const [dailyGoal, setDailyGoal] = useState<DailyMission | null>(null);
+  const [goalProgress, setGoalProgress] = useState(0);
+  const [completingGoal, setCompletingGoal] = useState(false);
   const [juzDivision, setJuzDivision] = useState<{ juz: number; assignments: Record<string, string> } | null>(null);
 
   const quran = useQuranSearch();
@@ -320,12 +326,28 @@ export default function VideoCallModal({
     async function start() {
       // Fetch daily goal for reference in call
       const todayStr = new Date().toISOString().split('T')[0];
-      // We'll use a simplified version or the one from channel if available.
-      // But for now, we try to fetch if we have an ID.
-      // channelName in this context is often the family ID
-      if (channelName.length > 20) { // looks like a UUID
+      const targetFamilyId = familyId || (channelName.length > 20 ? channelName : null);
+      
+      if (targetFamilyId) {
          const dk = getDailyVerseKey(todayStr);
-         getDailyMission(channelName, todayStr, dk).then(m => setDailyGoal(m));
+         getDailyMission(targetFamilyId, todayStr, dk).then(m => {
+           setDailyGoal(m);
+           if (m) {
+             // Calculate real progress
+             supabase.from('mission_completions').select('*', { count: 'exact', head: true })
+               .eq('daily_mission_id', m.id)
+               .eq('date', todayStr)
+               .eq('status', 'approved')
+               .then(({ count }) => {
+                 supabase.from('profiles').select('*', { count: 'exact', head: true })
+                   .eq('family_id', targetFamilyId)
+                   .then(({ count: totalMembers }) => {
+                     const pct = Math.min(100, Math.round(((count || 0) / (totalMembers || 1)) * 100));
+                     setGoalProgress(pct);
+                   });
+               });
+           }
+         });
       }
 
       // Request camera+mic.
@@ -429,6 +451,26 @@ export default function VideoCallModal({
     setActivePanel('none');
     channelRef.current?.send({ type: 'broadcast', event: 'signal', payload: { from: userId, to: '*', type: 'emoji', payload: emoji, name: displayName } });
   };
+
+  const currentFamilyId = familyId || (channelName.length > 20 ? channelName : null);
+
+  const handleCompleteGoal = useCallback(async () => {
+    if (!dailyGoal || !userId || !currentFamilyId || completingGoal) return;
+    setCompletingGoal(true);
+    const todayStr = new Date().toISOString().split('T')[0];
+    try {
+      const { completeMission } = await import('@/lib/store');
+      const { data } = await completeMission(userId, currentFamilyId, dailyGoal.id, todayStr, true, undefined, 'Completed during family call', 100, 'We accomplished this together as a family during our video session! 🤲', userRole || 'parent');
+      if (data) {
+        setGoalProgress(100);
+        sendEmoji('⭐');
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCompletingGoal(false);
+    }
+  }, [dailyGoal, userId, currentFamilyId, completingGoal, userRole, sendEmoji]);
 
   const handleEnd = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -900,11 +942,24 @@ export default function VideoCallModal({
                     <p className="text-white text-sm font-medium leading-relaxed">
                       {dailyGoal.parent_override_text || dailyGoal.generated_text}
                     </p>
-                    <div className="mt-3 flex items-center gap-2">
-                       <div className="w-full bg-[#5a6b28]/10 h-1.5 rounded-full overflow-hidden">
-                          <div className="bg-[#5a6b28] h-full w-1/3 animate-pulse" />
+                    <div className="mt-4 flex flex-col gap-2">
+                       <div className="flex justify-between items-end mb-0.5">
+                          <span className="text-white/30 text-[9px] uppercase font-bold tracking-widest">Progress</span>
+                          <span className="text-[#5a6b28] text-[10px] font-black">{goalProgress}%</span>
                        </div>
-                       <span className="text-white/30 text-[10px] whitespace-nowrap">Group Goal</span>
+                       <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden border border-white/5 p-[1px]">
+                          <div className="bg-gradient-to-r from-[#5a6b28] to-amber-500 h-full rounded-full transition-all duration-1000 shadow-[0_0_8px_rgba(90,107,40,0.4)]" 
+                               style={{ width: `${goalProgress}%` }} />
+                       </div>
+                       
+                       {userRole === 'parent' && goalProgress < 100 && (
+                         <button 
+                           onClick={handleCompleteGoal}
+                           disabled={completingGoal}
+                           className="mt-3 w-full py-2.5 rounded-xl bg-[#5a6b28] text-white text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2">
+                           {completingGoal ? <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <><CheckSquare size={14} /> Mission Accomplished</>}
+                         </button>
+                       )}
                     </div>
                   </div>
                 )}
