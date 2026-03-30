@@ -7,10 +7,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { uploadProofImage } from '@/lib/store';
 import { syncPostToFoundation } from '@/lib/quran-foundation-sync';
-import { Send, BookOpen, X, Loader2, Trash2, Users, Mic, MicOff, Video, Camera, CornerUpLeft, ChevronLeft, PhoneOff } from 'lucide-react';
+import { Send, BookOpen, X, Loader2, Trash2, Users, Mic, MicOff, Video, Camera, CornerUpLeft, ChevronLeft } from 'lucide-react';
 import nextDynamic from 'next/dynamic';
 const VideoCallModal = nextDynamic(() => import('@/components/VideoCallModal'), { ssr: false });
-import { type IncomingCallInfo } from '@/components/VideoCallModal';
 import LoadingBlock from '@/components/LoadingBlock';
 import { useSwipeDown } from '@/hooks/useSwipeDown';
 import { useRouter } from 'next/navigation';
@@ -79,8 +78,6 @@ export default function ChatPage() {
   const [showShareAyah, setShowShareAyah] = useState(false);
   const [shareInput, setShareInput] = useState('');
   const [shareResult, setShareResult] = useState<{ arabic: string; translation: string; key: string } | null>(null);
-  const [shareSurahMatch, setShareSurahMatch] = useState<{ num: number; total: number; name: string } | null>(null);
-  const [shareAyahNum, setShareAyahNum] = useState('');
   const [shareLooking, setShareLooking] = useState(false);
   const [myClearedAt, setMyClearedAt] = useState<string | null>(null);
   const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
@@ -89,24 +86,6 @@ export default function ChatPage() {
   const [confirmClearMyChat, setConfirmClearMyChat] = useState(false);
   const [clearingChat, setClearingChat] = useState(false);
   const [showVideoCall, setShowVideoCall] = useState(false);
-  const [incomingCall, setIncomingCall] = useState<IncomingCallInfo | null>(null);
-  const [activeCallers, setActiveCallers] = useState<Record<string, number>>({}); // uid -> timestamp
-  const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  // PRE-INITIALIZE AUDIO FOR MOBILE COMPATIBILITY (bypasses some HP blocks)
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-       const a = new Audio('https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3');
-       a.loop = false; // AS REQUESTED: Ring only once, no loop
-       a.preload = 'auto';
-       ringtoneAudioRef.current = a;
-    }
-    return () => {
-       ringtoneAudioRef.current?.pause();
-       ringtoneAudioRef.current = null;
-    };
-  }, []);
-
   const [isRecording, setIsRecording] = useState(false);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [sendingVoice, setSendingVoice] = useState(false);
@@ -192,31 +171,9 @@ export default function ChatPage() {
             const up = payload.new as any;
             setFamilyIcon(up.icon || '');
           })
-        .subscribe(),
-      supabase.channel(`family_calls_${family.id}`)
-        .on('broadcast', { event: 'incoming_call' }, ({ payload }) => {
-           if (payload.callerId === user?.id) return;
-           // AS REQUESTED: Only show UI inform, NO ringtone for other members
-           setIncomingCall(payload as IncomingCallInfo);
-           window.setTimeout(() => setIncomingCall(null), 8500);
-        })
-        .on('broadcast', { event: 'presence' }, ({ payload }) => {
-           // TRACK ACTIVE CALLERS: Clean stale entries
-           const now = Date.now();
-           const from = payload.from as string;
-           setActiveCallers(prev => {
-              const next: Record<string, number> = { ...prev, [from]: now };
-              // Remove IDs older than 12 seconds
-              Object.keys(next).forEach(k => { if (now - next[k] > 12000) delete next[k]; });
-              return next;
-           });
-        })
         .subscribe()
     ];
-    return () => { 
-      channelArr.forEach(c => supabase.removeChannel(c)); 
-      ringtoneAudioRef.current?.pause();
-    };
+    return () => { channelArr.forEach(c => supabase.removeChannel(c)); };
   }, [family]);
 
   useEffect(() => {
@@ -256,30 +213,16 @@ export default function ChatPage() {
   async function lookupShareVerse() {
     const q = shareInput.trim();
     if (!q) return;
-    setShareLooking(true); setShareResult(null); setShareSurahMatch(null); setShareAyahNum('');
+    setShareLooking(true); setShareResult(null);
     try {
       const res = await fetch(`/api/quran/search?q=${encodeURIComponent(q)}`);
       if (res.ok) {
         const d = await res.json();
-        if (d.search?.surah) {
-          setShareSurahMatch({ num: d.search.surah, total: d.search.total, name: q });
-        } else if (d.search?.results?.length > 0) {
-          const v = d.search.results[0];
+        const results = d?.search?.results;
+        if (results && results.length > 0) {
+          const v = results[0];
           setShareResult({ arabic: v.text || '', translation: v.translations?.[0]?.text || '', key: v.verse_key });
         }
-      }
-    } catch { /* silent */ }
-    setShareLooking(false);
-  }
-
-  async function pickShareAyah(chap: number, v: number) {
-    if (!chap || !v) return;
-    setShareLooking(true); setShareResult(null);
-    try {
-      const res = await fetch(`/api/quran?chapter=${chap}&verse=${v}`);
-      if (res.ok) {
-        const d = await res.json();
-        setShareResult({ arabic: d.text_uthmani || '', translation: d.translation || '', key: d.verse_key });
       }
     } catch { /* silent */ }
     setShareLooking(false);
@@ -463,66 +406,17 @@ export default function ChatPage() {
           <div>
             <p className="font-bold text-sm leading-tight">{family?.name || 'Family'} Group</p>
             <p className="text-[10px] text-white/65 leading-tight">
-              {Object.keys(activeCallers).length > 0 ? (
-                <span className="text-green-400 font-bold flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                  Live Call ({Object.keys(activeCallers).length + (showVideoCall ? 1 : 0)})
-                </span>
-              ) : (
-                onlineMembers.length > 0
-                  ? onlineMembers.map(m => m.name.split(' ')[0]).join(', ')
-                  : 'Loading members...'
-              )}
+              {onlineMembers.length > 0
+                ? onlineMembers.map(m => m.name.split(' ')[0]).join(', ')
+                : 'Loading members...'}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {Object.keys(activeCallers).length > 0 && !showVideoCall && (
-            <button 
-              type="button" 
-              onClick={() => setShowVideoCall(true)}
-              className="bg-green-500 text-white text-[10px] font-black uppercase px-3 py-1.5 rounded-lg shadow-lg active:scale-95 transition-all flex items-center gap-1.5 animate-in slide-in-from-right-4">
-              <Video size={12} /> Join Call
-            </button>
-          )}
-          {!showVideoCall && Object.keys(activeCallers).length === 0 && (
-            <button type="button" title="Video Call" 
-              onClick={async () => {
-                setShowVideoCall(true);
-                if (family && user && profile) {
-                  // 1. Play one-shot ringtone ONLY for the initiator
-                  if (ringtoneAudioRef.current) {
-                     ringtoneAudioRef.current.currentTime = 0;
-                     ringtoneAudioRef.current.play().catch(() => {});
-                  }
-
-                  // 2. Broadcast incoming call to trigger Join button for others
-                  await supabase.channel(`family_calls_${family.id}`).send({
-                    type: 'broadcast',
-                    event: 'incoming_call',
-                    payload: {
-                      callerName: profile.name,
-                      familyName: family.name,
-                      channelName: family.id,
-                      callerId: user.id
-                    }
-                  });
-
-                  // 3. AS REQUESTED: Send Chat Inform (Message in Chat)
-                  const sessionMsg = `🔴 **Video call has started**\n*Click "Join Call" in the group header to participate.*`;
-                  await supabase.from('family_messages').insert({ 
-                    family_id: family.id, 
-                    user_id: user.id, 
-                    sender_name: 'Musfam Assistant', 
-                    sender_role: 'guardian', 
-                    content: sessionMsg 
-                  });
-                }
-              }}
-              className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
-              <Video size={16} className="text-white/90" />
-            </button>
-          )}
+          <button type="button" title="Video Call" onClick={() => setShowVideoCall(true)}
+            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
+            <Video size={16} className="text-white/90" />
+          </button>
           <button type="button" title="Clear chat" onClick={() => setConfirmClearMyChat(true)}
             className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
             <Trash2 size={15} className="text-white/80" />
@@ -705,7 +599,7 @@ export default function ChatPage() {
       {/* Share Ayah modal */}
       {showShareAyah && (
         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={e => { if (e.target === e.currentTarget) { setShowShareAyah(false); setShareInput(''); setShareResult(null); setShareSurahMatch(null); setShareAyahNum(''); } }}>
+          onClick={e => { if (e.target === e.currentTarget) { setShowShareAyah(false); setShareInput(''); setShareResult(null); } }}>
           <div
             ref={shareSwipe.sheetRef}
             onTouchStart={shareSwipe.handleTouchStart}
@@ -714,7 +608,7 @@ export default function ChatPage() {
             className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-gray-800">Share Quran Ayah</h3>
-              <button type="button" title="Close" onClick={() => { setShowShareAyah(false); setShareInput(''); setShareResult(null); setShareSurahMatch(null); setShareAyahNum(''); }}
+              <button type="button" title="Close" onClick={() => { setShowShareAyah(false); setShareInput(''); setShareResult(null); }}
                 className="text-gray-400"><X size={20} /></button>
             </div>
             <div className="flex gap-2">
@@ -723,53 +617,18 @@ export default function ChatPage() {
                 className="flex-1 bg-gray-100 rounded-xl px-4 py-2.5 text-sm focus:outline-none" />
               <button type="button" onClick={lookupShareVerse} disabled={shareLooking}
                 className="bg-[#2d3a10] text-white px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50">
-                {shareLooking && !shareSurahMatch ? <Loader2 size={16} className="animate-spin" /> : 'Find'}
+                {shareLooking ? <Loader2 size={16} className="animate-spin" /> : 'Find'}
               </button>
             </div>
-
-            {/* Surah Match → Ayah Number Picker */}
-            {shareSurahMatch && !shareResult && (
-              <div className="bg-[#5a6b28]/5 rounded-2xl p-4 border border-[#5a6b28]/20 space-y-3 animate-in slide-in-from-top-2">
-                <div className="flex items-center justify-between">
-                   <p className="text-sm font-bold text-[#2d3a10]">Surah {shareSurahMatch.num} matched</p>
-                   <p className="text-[10px] text-gray-400 font-bold uppercase">{shareSurahMatch.total} Verses</p>
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="number" 
-                    min={1} 
-                    max={shareSurahMatch.total}
-                    value={shareAyahNum}
-                    onChange={e => setShareAyahNum(e.target.value)}
-                    placeholder={`Enter Ayah 1–${shareSurahMatch.total}`}
-                    className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none ring-1 ring-inset ring-transparent focus:ring-[#5a6b28]/30"
-                  />
-                  <button 
-                    type="button"
-                    disabled={!shareAyahNum || shareLooking}
-                    onClick={() => pickShareAyah(shareSurahMatch.num, parseInt(shareAyahNum, 10))}
-                    className="bg-[#5a6b28] text-white px-5 rounded-xl text-sm font-bold disabled:opacity-50 transition-all">
-                    {shareLooking ? <Loader2 size={16} className="animate-spin" /> : 'Pick'}
-                  </button>
-                </div>
-              </div>
-            )}
-
             {shareResult && (
-              <div className="bg-[#DCF8C6]/40 rounded-2xl p-4 border border-[#DCF8C6] space-y-2 animate-in zoom-in-95">
-                <div className="flex items-center justify-between mb-1">
-                   <p className="text-xs font-bold text-[#2d3a10]/60 uppercase tracking-wider">{verseKeyToLabel(shareResult.key)}</p>
-                   {shareSurahMatch && (
-                     <button type="button" onClick={() => { setShareResult(null); setShareAyahNum(''); }} 
-                       className="text-[10px] font-bold text-[#5a6b28] hover:underline">Pick another</button>
-                   )}
-                </div>
-                <p className="text-right text-lg text-[#2d3a10] leading-snug" style={{ fontFamily: "'Amiri Quran', 'Amiri', serif" }}>
+              <div className="bg-[#DCF8C6]/40 rounded-2xl p-4 border border-[#DCF8C6] space-y-2">
+                <p className="text-xs font-bold text-[#2d3a10]/60 uppercase tracking-wider">{verseKeyToLabel(shareResult.key)}</p>
+                <p className="text-right text-lg text-[#2d3a10]" style={{ fontFamily: "'Amiri Quran', 'Amiri', serif" }}>
                   {shareResult.arabic}
                 </p>
-                <p className="text-xs text-gray-600 italic line-clamp-3 border-t border-white/20 pt-2">&quot;{shareResult.translation}&quot;</p>
+                <p className="text-xs text-gray-600 italic line-clamp-3">&quot;{shareResult.translation}&quot;</p>
                 <button type="button" onClick={sendShareAyah}
-                  className="w-full bg-[#5a6b28] text-white font-bold py-2.5 rounded-xl text-sm mt-2 shadow-sm active:scale-95 transition-all">
+                  className="w-full bg-[#5a6b28] text-white font-bold py-2.5 rounded-xl text-sm">
                   Share to Group
                 </button>
               </div>

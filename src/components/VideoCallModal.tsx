@@ -171,22 +171,6 @@ export default function VideoCallModal({
   const [completingGoal, setCompletingGoal] = useState(false);
   const [juzDivision, setJuzDivision] = useState<{ juz: number; assignments: Record<string, string> } | null>(null);
 
-  // Audio refs for call SFX - Pre-init for HP compatibility
-  const ringtoneRef = useRef<HTMLAudioElement | null>(null);
-  
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-       const a = new Audio('https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3');
-       a.loop = false; // AS REQUESTED: Ring once
-       a.preload = 'auto';
-       ringtoneRef.current = a;
-    }
-    return () => {
-       ringtoneRef.current?.pause();
-       ringtoneRef.current = null;
-    };
-  }, []);
-
   const quran = useQuranSearch();
 
   // Callback ref: fires every time the self-video element mounts/remounts.
@@ -239,8 +223,7 @@ export default function VideoCallModal({
     return `${m}:${sec}`;
   };
 
-  // UNIFIED CHANNEL NAME: MATCHES THE CHAT PAGE LISTENER
-  const sigChannel = `family_calls_${channelName}`;
+  const sigChannel = `video-call-${channelName}`;
 
   const sendSignal = useCallback((to: string, type: string, payload: unknown) => {
     channelRef.current?.send({
@@ -259,7 +242,6 @@ export default function VideoCallModal({
     };
 
     const remoteStream = new MediaStream();
-    // Play join sound when a new remote stream is ready
     pc.ontrack = (e) => {
       e.streams[0]?.getTracks().forEach(t => remoteStream.addTrack(t));
       const peer = peersRef.current.get(remoteUid);
@@ -267,15 +249,6 @@ export default function VideoCallModal({
         peer.remoteStream = remoteStream;
         if (peer.videoRef) peer.videoRef.srcObject = remoteStream;
       }
-
-      // Stop ringtone on first join
-      if (ringtoneRef.current && peersRef.current.size > 0) {
-        ringtoneRef.current.pause();
-      }
-      // Play join beep
-      const beep = new Audio('https://cdn.pixabay.com/audio/2021/08/04/audio_0625c13fad.mp3');
-      beep.play().catch(() => {});
-
       setPeers(prev => {
         const exists = prev.find(p => p.uid === remoteUid);
         if (exists) return prev.map(p => p.uid === remoteUid ? { ...p, hasVideo: true } : p);
@@ -418,13 +391,6 @@ export default function VideoCallModal({
           ch.send({ type: 'broadcast', event: 'signal', payload: { from: userId, to: '*', type: 'join', payload: null, name: displayName } });
           setConnecting(false);
           timerRef.current = setInterval(() => setDuration(d => d + 1), 1000);
-
-          // AS REQUESTED: Broadcast presence heartbeats
-          const sendPresence = () => ch.send({ type: 'broadcast', event: 'presence', payload: { from: userId } });
-          sendPresence(); // Send immediately on join
-          const pIv = setInterval(sendPresence, 3500);
-          
-          (window as any)._presenceIv = pIv;
         }
       });
     }
@@ -432,8 +398,6 @@ export default function VideoCallModal({
     return () => {
       cancelled = true;
       if (timerRef.current) clearInterval(timerRef.current);
-      if ((window as any)._presenceIv) clearInterval((window as any)._presenceIv);
-      ringtoneRef.current?.pause();
       screenStreamRef.current?.getTracks().forEach(t => t.stop());
       localStreamRef.current?.getTracks().forEach(t => t.stop());
       peersRef.current.forEach(p => p.connection.close());
