@@ -171,6 +171,10 @@ export default function VideoCallModal({
   const [completingGoal, setCompletingGoal] = useState(false);
   const [juzDivision, setJuzDivision] = useState<{ juz: number; assignments: Record<string, string> } | null>(null);
 
+  // Audio refs for call SFX
+  const ringtoneRef = useRef<HTMLAudioElement | null>(null);
+  const joinSfxRef = useRef<HTMLAudioElement | null>(null);
+
   const quran = useQuranSearch();
 
   // Callback ref: fires every time the self-video element mounts/remounts.
@@ -242,6 +246,7 @@ export default function VideoCallModal({
     };
 
     const remoteStream = new MediaStream();
+    // Play join sound when a new remote stream is ready
     pc.ontrack = (e) => {
       e.streams[0]?.getTracks().forEach(t => remoteStream.addTrack(t));
       const peer = peersRef.current.get(remoteUid);
@@ -249,6 +254,15 @@ export default function VideoCallModal({
         peer.remoteStream = remoteStream;
         if (peer.videoRef) peer.videoRef.srcObject = remoteStream;
       }
+
+      // Stop ringtone on first join
+      if (ringtoneRef.current && peersRef.current.size > 0) {
+        ringtoneRef.current.pause();
+      }
+      // Play join beep
+      const beep = new Audio('https://www.soundjay.com/button/beep-07.mp3');
+      beep.play().catch(() => {});
+
       setPeers(prev => {
         const exists = prev.find(p => p.uid === remoteUid);
         if (exists) return prev.map(p => p.uid === remoteUid ? { ...p, hasVideo: true } : p);
@@ -391,6 +405,11 @@ export default function VideoCallModal({
           ch.send({ type: 'broadcast', event: 'signal', payload: { from: userId, to: '*', type: 'join', payload: null, name: displayName } });
           setConnecting(false);
           timerRef.current = setInterval(() => setDuration(d => d + 1), 1000);
+
+          // Start ringtone while connecting
+          ringtoneRef.current = new Audio('https://www.soundjay.com/phone/phone-calling-1.mp3');
+          ringtoneRef.current.loop = true;
+          ringtoneRef.current.play().catch(() => {});
         }
       });
     }
@@ -398,6 +417,7 @@ export default function VideoCallModal({
     return () => {
       cancelled = true;
       if (timerRef.current) clearInterval(timerRef.current);
+      ringtoneRef.current?.pause();
       screenStreamRef.current?.getTracks().forEach(t => t.stop());
       localStreamRef.current?.getTracks().forEach(t => t.stop());
       peersRef.current.forEach(p => p.connection.close());

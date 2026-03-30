@@ -7,9 +7,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { uploadProofImage } from '@/lib/store';
 import { syncPostToFoundation } from '@/lib/quran-foundation-sync';
-import { Send, BookOpen, X, Loader2, Trash2, Users, Mic, MicOff, Video, Camera, CornerUpLeft, ChevronLeft } from 'lucide-react';
+import { Send, BookOpen, X, Loader2, Trash2, Users, Mic, MicOff, Video, Camera, CornerUpLeft, ChevronLeft, PhoneOff } from 'lucide-react';
 import nextDynamic from 'next/dynamic';
 const VideoCallModal = nextDynamic(() => import('@/components/VideoCallModal'), { ssr: false });
+import { type IncomingCallInfo } from '@/components/VideoCallModal';
 import LoadingBlock from '@/components/LoadingBlock';
 import { useSwipeDown } from '@/hooks/useSwipeDown';
 import { useRouter } from 'next/navigation';
@@ -86,6 +87,9 @@ export default function ChatPage() {
   const [confirmClearMyChat, setConfirmClearMyChat] = useState(false);
   const [clearingChat, setClearingChat] = useState(false);
   const [showVideoCall, setShowVideoCall] = useState(false);
+  const [incomingCall, setIncomingCall] = useState<IncomingCallInfo | null>(null);
+  const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
+
   const [isRecording, setIsRecording] = useState(false);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [sendingVoice, setSendingVoice] = useState(false);
@@ -171,9 +175,23 @@ export default function ChatPage() {
             const up = payload.new as any;
             setFamilyIcon(up.icon || '');
           })
+        .subscribe(),
+      supabase.channel(`family_calls_${family.id}`)
+        .on('broadcast', { event: 'incoming_call' }, ({ payload }) => {
+           if (payload.callerId === user?.id) return;
+           setIncomingCall(payload as IncomingCallInfo);
+           if (!ringtoneAudioRef.current) {
+             ringtoneAudioRef.current = new Audio('https://www.soundjay.com/phone/phone-calling-1.mp3');
+             ringtoneAudioRef.current.loop = true;
+           }
+           ringtoneAudioRef.current.play().catch(() => {});
+        })
         .subscribe()
     ];
-    return () => { channelArr.forEach(c => supabase.removeChannel(c)); };
+    return () => { 
+      channelArr.forEach(c => supabase.removeChannel(c)); 
+      ringtoneAudioRef.current?.pause();
+    };
   }, [family]);
 
   useEffect(() => {
@@ -348,6 +366,40 @@ export default function ChatPage() {
         />
       )}
 
+      {/* Incoming Call UI */}
+      {incomingCall && (
+        <div className="fixed inset-0 z-[1000] bg-black/90 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
+          <div className="relative mb-8">
+            <div className="absolute inset-0 bg-[#5a6b28] rounded-full animate-ping opacity-20" style={{ animationDuration: '2s' }} />
+            <div className="w-28 h-28 rounded-full bg-[#2d3a10] border-4 border-[#5a6b28]/30 flex items-center justify-center text-4xl font-black text-white relative z-10 shadow-[0_0_40px_rgba(45,58,16,0.3)]">
+              {incomingCall.callerName[0].toUpperCase()}
+            </div>
+          </div>
+          <p className="text-white text-3xl font-black mb-2">{incomingCall.callerName}</p>
+          <p className="text-white/50 text-sm font-extrabold uppercase tracking-[0.2em] mb-12">Incoming Call from {family?.name}</p>
+          
+          <div className="flex gap-14">
+            <button 
+              onClick={() => {
+                ringtoneAudioRef.current?.pause();
+                setIncomingCall(null);
+              }}
+              className="w-20 h-20 rounded-full bg-red-500 flex items-center justify-center shadow-[0_8px_30px_rgba(239,68,68,0.4)] active:scale-95 transition-all">
+              <PhoneOff className="text-white" size={28} />
+            </button>
+            <button 
+              onClick={() => {
+                ringtoneAudioRef.current?.pause();
+                setIncomingCall(null);
+                setShowVideoCall(true);
+              }}
+              className="w-20 h-20 rounded-full bg-green-500 flex items-center justify-center shadow-[0_8px_30px_rgba(34,197,94,0.4)] animate-bounce active:scale-95 transition-all">
+              <Video className="text-white" size={28} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Chat header (z-100 to stay above messages) */}
       <div className="relative bg-[#2d3a10] text-white px-3 py-2.5 flex items-center justify-between shadow-sm flex-shrink-0 z-[100] overflow-visible batik-overlay rounded-none">
         
@@ -413,7 +465,22 @@ export default function ChatPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" title="Video Call" onClick={() => setShowVideoCall(true)}
+          <button type="button" title="Video Call" 
+            onClick={() => {
+              setShowVideoCall(true);
+              if (family && user && profile) {
+                supabase.channel(`family_calls_${family.id}`).send({
+                  type: 'broadcast',
+                  event: 'incoming_call',
+                  payload: {
+                    callerName: profile.name,
+                    familyName: family.name,
+                    channelName: family.id,
+                    callerId: user.id
+                  }
+                });
+              }
+            }}
             className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
             <Video size={16} className="text-white/90" />
           </button>
