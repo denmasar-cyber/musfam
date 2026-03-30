@@ -171,9 +171,21 @@ export default function VideoCallModal({
   const [completingGoal, setCompletingGoal] = useState(false);
   const [juzDivision, setJuzDivision] = useState<{ juz: number; assignments: Record<string, string> } | null>(null);
 
-  // Audio refs for call SFX
+  // Audio refs for call SFX - Pre-init for HP compatibility
   const ringtoneRef = useRef<HTMLAudioElement | null>(null);
-  const joinSfxRef = useRef<HTMLAudioElement | null>(null);
+  
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+       const a = new Audio('https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3');
+       a.loop = true;
+       a.preload = 'auto';
+       ringtoneRef.current = a;
+    }
+    return () => {
+       ringtoneRef.current?.pause();
+       ringtoneRef.current = null;
+    };
+  }, []);
 
   const quran = useQuranSearch();
 
@@ -406,17 +418,15 @@ export default function VideoCallModal({
           setConnecting(false);
           timerRef.current = setInterval(() => setDuration(d => d + 1), 1000);
 
-          // Start ringtone while connecting (retry-safe)
-          const ringObj = new Audio();
-          ringObj.src = 'https://www.soundjay.com/phone/sounds/phone-calling-1.mp3';
-          ringObj.loop = true;
-          ringObj.load();
-          ringObj.play().catch((err) => {
-             console.warn('Caller ringtone blocked:', err);
-             const playOnInteract = () => { ringObj.play().catch(() => {}); window.removeEventListener('click', playOnInteract); };
-             window.addEventListener('click', playOnInteract);
-          });
-          ringtoneRef.current = ringObj;
+          // HP/Laptop SAFARI FIX: Reset ringer and play on connection
+          if (ringtoneRef.current) {
+             ringtoneRef.current.currentTime = 0;
+             ringtoneRef.current.play().catch((err) => {
+                console.warn('Caller ringtone blocked:', err);
+                const playOnInteract = () => { ringtoneRef.current?.play().catch(() => {}); window.removeEventListener('click', playOnInteract); };
+                window.addEventListener('click', playOnInteract);
+             });
+          }
         }
       });
     }

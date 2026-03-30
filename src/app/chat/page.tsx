@@ -92,6 +92,20 @@ export default function ChatPage() {
   const [incomingCall, setIncomingCall] = useState<IncomingCallInfo | null>(null);
   const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  // PRE-INITIALIZE AUDIO FOR MOBILE COMPATIBILITY (bypasses some HP blocks)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+       const a = new Audio('https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3');
+       a.loop = true;
+       a.preload = 'auto';
+       ringtoneAudioRef.current = a;
+    }
+    return () => {
+       ringtoneAudioRef.current?.pause();
+       ringtoneAudioRef.current = null;
+    };
+  }, []);
+
   const [isRecording, setIsRecording] = useState(false);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [sendingVoice, setSendingVoice] = useState(false);
@@ -183,17 +197,19 @@ export default function ChatPage() {
            if (payload.callerId === user?.id) return;
            setIncomingCall(payload as IncomingCallInfo);
            
-           const audioUrl = 'https://www.soundjay.com/phone/sounds/phone-calling-1.mp3';
-           const ringObj = new Audio();
-           ringObj.src = audioUrl;
-           ringObj.loop = true;
-           ringObj.load();
-           ringObj.play().catch((err) => {
-             console.warn('Ringtone play failed, waiting for interaction:', err);
-             const playOnInteract = () => { ringObj.play().catch(() => {}); window.removeEventListener('click', playOnInteract); };
-             window.addEventListener('click', playOnInteract);
-           });
-           ringtoneAudioRef.current = ringObj;
+           // Fire-and-forget play attempt
+           if (ringtoneAudioRef.current) {
+              ringtoneAudioRef.current.currentTime = 0;
+              ringtoneAudioRef.current.play().catch((err) => {
+                 console.warn('HP/PC blocked autoplay. Waiting for first interaction.', err);
+                 // HP SAFARI FIX: Any touch will trigger the audio if it was blocked
+                 const playOnFirstTouch = () => {
+                    ringtoneAudioRef.current?.play().catch(() => {});
+                    window.removeEventListener('pointerdown', playOnFirstTouch);
+                 };
+                 window.addEventListener('pointerdown', playOnFirstTouch);
+              });
+           }
         })
         .subscribe()
     ];
