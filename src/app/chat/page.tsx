@@ -182,11 +182,14 @@ export default function ChatPage() {
         .on('broadcast', { event: 'incoming_call' }, ({ payload }) => {
            if (payload.callerId === user?.id) return;
            setIncomingCall(payload as IncomingCallInfo);
-           if (!ringtoneAudioRef.current) {
-             ringtoneAudioRef.current = new Audio('https://www.soundjay.com/phone/phone-calling-1.mp3');
-             ringtoneAudioRef.current.loop = true;
-           }
-           ringtoneAudioRef.current.play().catch(() => {});
+           
+           const ringObj = new Audio('https://cdn.pixabay.com/audio/2022/03/10/audio_c3527058c0.mp3');
+           ringObj.loop = true;
+           ringObj.play().catch(() => {
+             const playOnInteract = () => { ringObj.play(); window.removeEventListener('click', playOnInteract); };
+             window.addEventListener('click', playOnInteract);
+           });
+           ringtoneAudioRef.current = ringObj;
         })
         .subscribe()
     ];

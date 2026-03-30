@@ -260,7 +260,7 @@ export default function VideoCallModal({
         ringtoneRef.current.pause();
       }
       // Play join beep
-      const beep = new Audio('https://www.soundjay.com/button/beep-07.mp3');
+      const beep = new Audio('https://cdn.pixabay.com/audio/2021/08/04/audio_0625c13fad.mp3');
       beep.play().catch(() => {});
 
       setPeers(prev => {
@@ -406,10 +406,15 @@ export default function VideoCallModal({
           setConnecting(false);
           timerRef.current = setInterval(() => setDuration(d => d + 1), 1000);
 
-          // Start ringtone while connecting
-          ringtoneRef.current = new Audio('https://www.soundjay.com/phone/phone-calling-1.mp3');
-          ringtoneRef.current.loop = true;
-          ringtoneRef.current.play().catch(() => {});
+          // Start ringtone while connecting (retry-safe)
+          const ringObj = new Audio('https://cdn.pixabay.com/audio/2022/03/10/audio_c3527058c0.mp3');
+          ringObj.loop = true;
+          ringObj.play().catch(() => {
+             // Fallback: wait for any interaction to play if blocked
+             const playOnInteract = () => { ringObj.play(); window.removeEventListener('click', playOnInteract); };
+             window.addEventListener('click', playOnInteract);
+          });
+          ringtoneRef.current = ringObj;
         }
       });
     }
