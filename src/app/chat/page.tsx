@@ -79,6 +79,8 @@ export default function ChatPage() {
   const [showShareAyah, setShowShareAyah] = useState(false);
   const [shareInput, setShareInput] = useState('');
   const [shareResult, setShareResult] = useState<{ arabic: string; translation: string; key: string } | null>(null);
+  const [shareSurahMatch, setShareSurahMatch] = useState<{ num: number; total: number; name: string } | null>(null);
+  const [shareAyahNum, setShareAyahNum] = useState('');
   const [shareLooking, setShareLooking] = useState(false);
   const [myClearedAt, setMyClearedAt] = useState<string | null>(null);
   const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
@@ -231,16 +233,30 @@ export default function ChatPage() {
   async function lookupShareVerse() {
     const q = shareInput.trim();
     if (!q) return;
-    setShareLooking(true); setShareResult(null);
+    setShareLooking(true); setShareResult(null); setShareSurahMatch(null); setShareAyahNum('');
     try {
       const res = await fetch(`/api/quran/search?q=${encodeURIComponent(q)}`);
       if (res.ok) {
         const d = await res.json();
-        const results = d?.search?.results;
-        if (results && results.length > 0) {
-          const v = results[0];
+        if (d.search?.surah) {
+          setShareSurahMatch({ num: d.search.surah, total: d.search.total, name: q });
+        } else if (d.search?.results?.length > 0) {
+          const v = d.search.results[0];
           setShareResult({ arabic: v.text || '', translation: v.translations?.[0]?.text || '', key: v.verse_key });
         }
+      }
+    } catch { /* silent */ }
+    setShareLooking(false);
+  }
+
+  async function pickShareAyah(chap: number, v: number) {
+    if (!chap || !v) return;
+    setShareLooking(true); setShareResult(null);
+    try {
+      const res = await fetch(`/api/quran?chapter=${chap}&verse=${v}`);
+      if (res.ok) {
+        const d = await res.json();
+        setShareResult({ arabic: d.text_uthmani || '', translation: d.translation || '', key: d.verse_key });
       }
     } catch { /* silent */ }
     setShareLooking(false);
@@ -666,7 +682,7 @@ export default function ChatPage() {
       {/* Share Ayah modal */}
       {showShareAyah && (
         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={e => { if (e.target === e.currentTarget) { setShowShareAyah(false); setShareInput(''); setShareResult(null); } }}>
+          onClick={e => { if (e.target === e.currentTarget) { setShowShareAyah(false); setShareInput(''); setShareResult(null); setShareSurahMatch(null); setShareAyahNum(''); } }}>
           <div
             ref={shareSwipe.sheetRef}
             onTouchStart={shareSwipe.handleTouchStart}
@@ -675,7 +691,7 @@ export default function ChatPage() {
             className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-gray-800">Share Quran Ayah</h3>
-              <button type="button" title="Close" onClick={() => { setShowShareAyah(false); setShareInput(''); setShareResult(null); }}
+              <button type="button" title="Close" onClick={() => { setShowShareAyah(false); setShareInput(''); setShareResult(null); setShareSurahMatch(null); setShareAyahNum(''); }}
                 className="text-gray-400"><X size={20} /></button>
             </div>
             <div className="flex gap-2">
@@ -684,18 +700,53 @@ export default function ChatPage() {
                 className="flex-1 bg-gray-100 rounded-xl px-4 py-2.5 text-sm focus:outline-none" />
               <button type="button" onClick={lookupShareVerse} disabled={shareLooking}
                 className="bg-[#2d3a10] text-white px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50">
-                {shareLooking ? <Loader2 size={16} className="animate-spin" /> : 'Find'}
+                {shareLooking && !shareSurahMatch ? <Loader2 size={16} className="animate-spin" /> : 'Find'}
               </button>
             </div>
+
+            {/* Surah Match → Ayah Number Picker */}
+            {shareSurahMatch && !shareResult && (
+              <div className="bg-[#5a6b28]/5 rounded-2xl p-4 border border-[#5a6b28]/20 space-y-3 animate-in slide-in-from-top-2">
+                <div className="flex items-center justify-between">
+                   <p className="text-sm font-bold text-[#2d3a10]">Surah {shareSurahMatch.num} matched</p>
+                   <p className="text-[10px] text-gray-400 font-bold uppercase">{shareSurahMatch.total} Verses</p>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="number" 
+                    min={1} 
+                    max={shareSurahMatch.total}
+                    value={shareAyahNum}
+                    onChange={e => setShareAyahNum(e.target.value)}
+                    placeholder={`Enter Ayah 1–${shareSurahMatch.total}`}
+                    className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none ring-1 ring-inset ring-transparent focus:ring-[#5a6b28]/30"
+                  />
+                  <button 
+                    type="button"
+                    disabled={!shareAyahNum || shareLooking}
+                    onClick={() => pickShareAyah(shareSurahMatch.num, parseInt(shareAyahNum, 10))}
+                    className="bg-[#5a6b28] text-white px-5 rounded-xl text-sm font-bold disabled:opacity-50 transition-all">
+                    {shareLooking ? <Loader2 size={16} className="animate-spin" /> : 'Pick'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {shareResult && (
-              <div className="bg-[#DCF8C6]/40 rounded-2xl p-4 border border-[#DCF8C6] space-y-2">
-                <p className="text-xs font-bold text-[#2d3a10]/60 uppercase tracking-wider">{verseKeyToLabel(shareResult.key)}</p>
-                <p className="text-right text-lg text-[#2d3a10]" style={{ fontFamily: "'Amiri Quran', 'Amiri', serif" }}>
+              <div className="bg-[#DCF8C6]/40 rounded-2xl p-4 border border-[#DCF8C6] space-y-2 animate-in zoom-in-95">
+                <div className="flex items-center justify-between mb-1">
+                   <p className="text-xs font-bold text-[#2d3a10]/60 uppercase tracking-wider">{verseKeyToLabel(shareResult.key)}</p>
+                   {shareSurahMatch && (
+                     <button type="button" onClick={() => { setShareResult(null); setShareAyahNum(''); }} 
+                       className="text-[10px] font-bold text-[#5a6b28] hover:underline">Pick another</button>
+                   )}
+                </div>
+                <p className="text-right text-lg text-[#2d3a10] leading-snug" style={{ fontFamily: "'Amiri Quran', 'Amiri', serif" }}>
                   {shareResult.arabic}
                 </p>
-                <p className="text-xs text-gray-600 italic line-clamp-3">&quot;{shareResult.translation}&quot;</p>
+                <p className="text-xs text-gray-600 italic line-clamp-3 border-t border-white/20 pt-2">&quot;{shareResult.translation}&quot;</p>
                 <button type="button" onClick={sendShareAyah}
-                  className="w-full bg-[#5a6b28] text-white font-bold py-2.5 rounded-xl text-sm">
+                  className="w-full bg-[#5a6b28] text-white font-bold py-2.5 rounded-xl text-sm mt-2 shadow-sm active:scale-95 transition-all">
                   Share to Group
                 </button>
               </div>
