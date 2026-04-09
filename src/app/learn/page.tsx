@@ -569,7 +569,7 @@ function Quiz({ category, onClose }: { category: Category; onClose: (earned: num
   }
 
   return (
-    <div className="flex flex-col flex-1">
+    <div className="flex flex-col flex-1 h-full overflow-hidden">
       {/* Header */}
       <div className="px-4 pt-4 pb-3 flex items-center gap-3">
         <button type="button" onClick={() => onClose(0)}
@@ -642,7 +642,7 @@ function Quiz({ category, onClose }: { category: Category; onClose: (earned: num
       </div>
 
       {selected !== null && (
-        <div className="px-4 pb-6 pt-2">
+        <div className="px-4 pb-6 pt-2 flex-shrink-0 bg-white">
           <button type="button" onClick={handleNext}
             className="w-full rounded-2xl py-3.5 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md batik-sm"
             style={{ background: category.bg }}>
@@ -691,7 +691,7 @@ export default function LearnPage() {
 
   if (activeCategory) {
     return (
-      <div className="fixed inset-0 bg-white z-[200] flex flex-col max-w-md mx-auto">
+      <div className="fixed inset-0 bg-white z-[200] flex flex-col max-w-md mx-auto h-[100dvh] overflow-hidden">
         <Quiz
           category={activeCategory}
           onClose={(earned) => handleQuizDone(earned, activeCategory.id)}
@@ -733,8 +733,8 @@ export default function LearnPage() {
   }
 
   return (
-    <>
-      <main className="flex-1 overflow-y-auto hide-scrollbar px-4 py-4 space-y-5 pb-24 page-enter">
+    <div className="flex flex-col h-full bg-[#FAFAFA]">
+      <main className="flex-1 overflow-y-auto hide-scrollbar px-4 pt-6 pb-[120px] space-y-5 page-enter">
 
         {/* ── Level compact card ── */}
         <div className="rounded-2xl overflow-hidden shadow-sm border border-black/[0.06]"
@@ -870,6 +870,6 @@ export default function LearnPage() {
         </div>
 
       </main>
-    </>
+    </div>
   );
 }

@@ -2,712 +2,434 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
-import { uploadProofImage } from '@/lib/store';
-import { syncPostToFoundation } from '@/lib/quran-foundation-sync';
-import { Send, BookOpen, X, Loader2, Trash2, Users, Mic, MicOff, Video, Camera, CornerUpLeft, ChevronLeft } from 'lucide-react';
-import nextDynamic from 'next/dynamic';
-const VideoCallModal = nextDynamic(() => import('@/components/VideoCallModal'), { ssr: false });
-import LoadingBlock from '@/components/LoadingBlock';
 import { useSwipeDown } from '@/hooks/useSwipeDown';
 import { useRouter } from 'next/navigation';
+import { Mission, DailyMission, Profile } from '@/lib/types';
+import { getDailyMission } from '@/lib/store';
+import { getAppDate, getDailyVerseKey } from '@/lib/quran-api';
+import { useQuranSearch } from '@/hooks/useQuranSearch';
+import {
+  Send, ChevronLeft, Video, Mic, MicOff, Trash2, Camera, Loader2,
+  BookOpen, Users, X, CornerUpLeft, ChevronRight, MessageSquare, Search, ArrowLeft
+} from 'lucide-react';
+import LoadingBlock from '@/components/LoadingBlock';
+import VideoCallModal from '@/components/VideoCallModal';
 
-interface ChatMessage {
+interface Message {
   id: string;
   family_id: string;
   user_id: string;
   sender_name: string;
-  sender_role: 'parent' | 'child';
+  sender_role: string;
   content: string;
   created_at: string;
 }
 
-interface OnlineMember {
-  user_id: string;
-  name: string;
-  role: 'parent' | 'child';
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
 }
 
-const SURAH_TRANSLITERATIONS = [
-  '','Al-Fatihah','Al-Baqarah','Ali \'Imran','An-Nisa','Al-Ma\'idah','Al-An\'am','Al-A\'raf','Al-Anfal','At-Tawbah','Yunus',
-  'Hud','Yusuf','Ar-Ra\'d','Ibrahim','Al-Hijr','An-Nahl','Al-Isra','Al-Kahf','Maryam','Ta-Ha',
-  'Al-Anbiya','Al-Hajj','Al-Mu\'minun','An-Nur','Al-Furqan','Ash-Shu\'ara','An-Naml','Al-Qasas','Al-\'Ankabut','Ar-Rum',
-  'Luqman','As-Sajdah','Al-Ahzab','Saba','Fatir','Ya-Sin','As-Saffat','Sad','Az-Zumar','Ghafir',
-  'Fussilat','Ash-Shura','Az-Zukhruf','Ad-Dukhan','Al-Jathiyah','Al-Ahqaf','Muhammad','Al-Fath','Al-Hujurat','Qaf',
-  'Adh-Dhariyat','At-Tur','An-Najm','Al-Qamar','Ar-Rahman','Al-Waqi\'ah','Al-Hadid','Al-Mujadila','Al-Hashr','Al-Mumtahanah',
-  'As-Saf','Al-Jumu\'ah','Al-Munafiqun','At-Taghabun','At-Talaq','At-Tahrim','Al-Mulk','Al-Qalam','Al-Haqqah','Al-Ma\'arij',
-  'Nuh','Al-Jinn','Al-Muzzammil','Al-Muddaththir','Al-Qiyamah','Al-Insan','Al-Mursalat','An-Naba','An-Nazi\'at','\'Abasa',
-  'At-Takwir','Al-Infitar','Al-Mutaffifin','Al-Inshiqaq','Al-Buruj','At-Tariq','Al-A\'la','Al-Ghashiyah','Al-Fajr','Al-Balad',
-  'Ash-Shams','Al-Layl','Ad-Duhaa','Ash-Sharh','At-Tin','Al-\'Alaq','Al-Qadr','Al-Bayyinah','Az-Zalzalah','Al-\'Adiyat',
-  'Al-Qari\'ah','At-Takathur','Al-\'Asr','Al-Humazah','Al-Fil','Quraysh','Al-Ma\'un','Al-Kawthar','Al-Kafirun','An-Nasr',
-  'Al-Masad','Al-Ikhlas','Al-Falaq','An-Nas',
-];
-
-function verseKeyToLabel(key: string): string {
-  const [surahStr, ayahStr] = key.split(':');
-  const surahNum = parseInt(surahStr, 10);
-  const name = SURAH_TRANSLITERATIONS[surahNum] || `Surah ${surahNum}`;
-  return `${name} ${surahStr}:${ayahStr}`;
+function formatDateLabel(iso: string) {
+  const d = new Date(iso);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  const yest = new Date();
+  yest.setDate(today.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-function AyahBubble({ content }: { content: string }) {
+const AyahBubble = ({ content }: { content: string }) => {
   const lines = content.split('\n');
-  const labelLine = lines[0];
-  const rest = lines.slice(1).join('\n');
+  const ref = lines[0]?.replace('📖 ', '');
+  const arabic = lines[1];
+  const trans = lines.slice(2).join('\n');
   return (
-    <div>
-      <p className="text-[10px] font-bold text-[#2d3a10]/70 mb-1">{labelLine}</p>
-      <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed"
-        style={{ fontFamily: "'Amiri Quran', 'Amiri', serif" }}>
-        {rest}
+    <div className="space-y-1.5 min-w-[200px]">
+      <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#2d3a10]/50 uppercase tracking-widest border-b border-[#2d3a10]/10 pb-1">
+        <BookOpen size={10} />
+        {ref}
+      </div>
+      <p className="text-right text-lg text-[#2d3a10] leading-snug pt-1" style={{ fontFamily: "'Amiri Quran', 'Amiri', serif" }}>
+        {arabic}
       </p>
+      <p className="text-[11px] text-gray-600 italic leading-relaxed">&quot;{trans}&quot;</p>
     </div>
   );
-}
+};
 
 export default function ChatPage() {
-  const { user, profile, family } = useAuth();
+  const { user, profile, family, loading: authLoading } = useAuth();
   const router = useRouter();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [onlineMembers, setOnlineMembers] = useState<OnlineMember[]>([]);
-  const [showShareAyah, setShowShareAyah] = useState(false);
-  const [shareInput, setShareInput] = useState('');
-  const [shareResult, setShareResult] = useState<{ arabic: string; translation: string; key: string } | null>(null);
-  const [shareSurahMatch, setShareSurahMatch] = useState<{ num: number; total: number; name: string } | null>(null);
-  const [shareAyahNum, setShareAyahNum] = useState('');
-  const [shareLooking, setShareLooking] = useState(false);
-  const [myClearedAt, setMyClearedAt] = useState<string | null>(null);
-  const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
-  const [replyTo, setReplyTo] = useState<{ id: string; sender: string; content: string } | null>(null);
-  const [deletingMsgId, setDeletingMsgId] = useState<string | null>(null);
-  const [confirmClearMyChat, setConfirmClearMyChat] = useState(false);
-  const [clearingChat, setClearingChat] = useState(false);
+  const [dailyMission, setDailyMission] = useState<DailyMission | null>(null);
   const [showVideoCall, setShowVideoCall] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
-  const [sendingVoice, setSendingVoice] = useState(false);
-  const [familyIcon, setFamilyIcon] = useState<string>('upload');
-  const [dailyMission, setDailyMission] = useState<any>(null);
-  const [verseOfDay, setVerseOfDay] = useState<any>(null);
-  const [missionLoading, setMissionLoading] = useState(true);
+  const [familyIcon, setFamilyIcon] = useState<string | null>(null);
+  const [deletingMsgId, setDeletingMsgId] = useState<string | null>(null);
+  const iconUploadRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const iconUploadRef = useRef<HTMLInputElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
 
-  void uploadProofImage; // suppress unused warning
+  // Voice recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [sendingVoice, setSendingVoice] = useState(false);
 
-  const closeShareAyah = useCallback(() => setShowShareAyah(false), []);
-  const shareSwipe = useSwipeDown(closeShareAyah);
+  // Message selection & reply
+  const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<{ id: string; sender: string; content: string } | null>(null);
+
+  // Clear chat
+  const [confirmClearMyChat, setConfirmClearMyChat] = useState(false);
+  const [clearingChat, setClearingChat] = useState(false);
+
+  // Share Ayah — uses refined shared hook
+  const quran = useQuranSearch();
+  const [showShareAyah, setShowShareAyah] = useState(false);
+  const shareSwipe = useSwipeDown(() => setShowShareAyah(false));
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    bottomRef.current?.scrollIntoView({ behavior });
+  };
 
   useEffect(() => {
-    if (family?.icon) setFamilyIcon(family.icon);
-    else if (family?.id) {
-       // Deep fetch if not in auth context
-       supabase.from('families').select('icon').eq('id', family.id).single().then(({ data }) => {
-         if (data?.icon) setFamilyIcon(data.icon);
-         else setFamilyIcon('upload');
-       });
-    }
-  }, [family]);
+    if (!family || !user || authLoading) return;
+    setFamilyIcon(family.icon || null);
 
-  const loadMessages = useCallback(async () => {
-    if (!family || !user) return;
-    
-    setLoading(true);
-    try {
-      // 1. Load Messages
-      // 🛡️ ECOSYSTEM SYNC: Fetch message history from Quran Foundation
-      const res = await fetch(`/api/quran/sync?action=posts&room_id=${family.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        const foundationMessages: ChatMessage[] = (data.posts || []).map((p: any) => ({
-          id: p.id,
-          family_id: family.id,
-          user_id: p.user_id,
-          sender_name: p.user?.name || 'Member',
-          sender_role: 'child', 
-          content: p.content,
-          created_at: p.created_at
-        }));
-        setMessages(foundationMessages);
-      } else {
-        const { data } = await supabase.from('family_messages').select('*').eq('family_id', family.id).order('created_at', { ascending: true }).limit(50);
-        if (data) setMessages(data as ChatMessage[]);
-      }
-
-      // 2. Load Daily Mission
-      setMissionLoading(true);
-      const vK = Date.now().toString(); // simplistic key
-      const { data: vRes } = await supabase.from('daily_verse_cache').select('*').limit(1).maybeSingle();
-      if (vRes) setVerseOfDay(vRes);
+    const loadData = async () => {
+      const todayStr = getAppDate().toISOString().split('T')[0];
+      const vKey = getDailyVerseKey();
       
-      const { data: mRes } = await supabase.from('daily_missions').select('*').eq('family_id', family.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (mRes) setDailyMission(mRes);
-      setMissionLoading(false);
+      const vDataRes = await fetch(`https://api.quran.com/api/v4/verses/by_key/${vKey}?translations=131&fields=text_uthmani`);
+      const vData = vDataRes.ok ? await vDataRes.json() : null;
+      const trans = vData?.verse?.translations?.[0]?.text?.replace(/<[^>]*>/g, '') || '';
+      
+      const dm = await getDailyMission(family.id, todayStr, vKey, trans, family.name);
+      setDailyMission(dm);
 
-    } catch (err) {
-      console.error('Foundation Sync Error:', err);
-    }
-    setLoading(false);
-  }, [family, user]);
+      const { data } = await supabase.from('family_messages').select('*').eq('family_id', family.id).order('created_at', { ascending: true });
+      if (data) {
+        setMessages(data);
+      }
+      setLoading(false);
+      setTimeout(() => scrollToBottom('auto'), 100);
+    };
+    loadData();
 
-  useEffect(() => { loadMessages(); }, [loadMessages]);
+    const channel = supabase.channel(`family_messages:${family.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'family_messages', filter: `family_id=eq.${family.id}` }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          const nm = payload.new as Message;
+          setMessages(prev => [...prev, nm]); setTimeout(() => scrollToBottom(), 100);
+        } else if (payload.eventType === 'DELETE') {
+          setMessages(prev => prev.filter(m => m.id !== payload.old.id));
+        }
+      }).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [family, user, authLoading]);
 
-  useEffect(() => {
-    if (!family) return;
-    const channelArr = [
-      supabase.channel(`family_chat_${family.id}`)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'family_messages', filter: `family_id=eq.${family.id}` },
-          (payload) => setMessages(prev => [...prev, payload.new as ChatMessage]))
-        .subscribe(),
-      supabase.channel(`family_info_${family.id}`)
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'families', filter: `id=eq.${family.id}` },
-          (payload) => {
-            const up = payload.new as any;
-            setFamilyIcon(up.icon || '');
-          })
-        .subscribe()
-    ];
-    return () => { channelArr.forEach(c => supabase.removeChannel(c)); };
-  }, [family]);
-
-  useEffect(() => {
-    if (!family) return;
-    supabase.from('profiles').select('id, name, role').eq('family_id', family.id).then(({ data }) => {
-      if (data) setOnlineMembers(data.map((p: { id: string; name: string; role: string }) => ({ user_id: p.id, name: p.name, role: p.role as 'parent' | 'child' })));
-    });
-  }, [family]);
-
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
-
-  async function sendMessage(text: string) {
-    let content = text.trim();
-    if (!content || !user || !family || !profile) return;
-    if (replyTo) {
-      const preview = replyTo.content.length > 60 ? replyTo.content.slice(0, 60) + '…' : replyTo.content;
-      content = `[reply:${replyTo.sender}] ${preview}\n${content}`;
-      setReplyTo(null);
-    }
+  const sendMessage = async (content: string) => {
+    if (!user || !profile || !family || !content.trim()) return;
     setSending(true);
-    
-    // 🛡️ ECOSYSTEM SYNC: Send to Quran Foundation Social Cloud
-    await syncPostToFoundation(content, family.id);
-    
-    // Maintain local Supabase for instant Realtime broadcast within the family app
-    await supabase.from('family_messages').insert({ 
-      family_id: family.id, 
-      user_id: user.id, 
-      sender_name: profile.name, 
-      sender_role: profile.role, 
-      content 
-    });
-    
-    setInput(''); setSending(false); inputRef.current?.focus();
-  }
+    let finalContent = content.trim();
+    if (replyTo) { finalContent = `[reply:${replyTo.sender}: ${replyTo.content}]\n${finalContent}`; setReplyTo(null); }
+    const { error } = await supabase.from('family_messages').insert({ family_id: family.id, user_id: user.id, sender_name: profile.name, sender_role: profile.role, content: finalContent });
+    if (error) console.error(error);
+    setInput('');
+    setSending(false);
+    inputRef.current?.focus();
+  };
 
-  async function lookupShareVerse() {
-    const q = shareInput.trim();
-    if (!q) return;
-    setShareLooking(true); setShareResult(null); setShareSurahMatch(null); setShareAyahNum('');
+  const deleteMessage = async (id: string) => {
+    setDeletingMsgId(id);
+    const { error } = await supabase.from('family_messages').delete().eq('id', id);
+    if (error) console.error(error);
+    setDeletingMsgId(null);
+  };
+
+  const uploadFamilyIcon = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !family) return;
     try {
-      const res = await fetch(`/api/quran/search?q=${encodeURIComponent(q)}`);
-      if (res.ok) {
-        const d = await res.json();
-        if (d.search?.surah) {
-          setShareSurahMatch({ num: d.search.surah, total: d.search.total, name: q });
-        } else if (d.search?.results?.length > 0) {
-          const v = d.search.results[0];
-          setShareResult({ arabic: v.text || '', translation: v.translations?.[0]?.text || '', key: v.verse_key });
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `family_${family.id}_${Date.now()}.${ext}`;
+      const { data, error } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
+      if (error) console.error('Upload err:', error.message);
+      if (data) {
+        const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+        if (urlData?.publicUrl) {
+          const { error: updateErr } = await supabase.from('families').update({ icon: urlData.publicUrl }).eq('id', family.id);
+          if (!updateErr) setFamilyIcon(urlData.publicUrl);
         }
       }
-    } catch { /* silent */ }
-    setShareLooking(false);
-  }
+    } catch (err) { console.error('Upload catch err:', err); }
+  };
 
-  async function pickShareAyah(chap: number, v: number) {
-    if (!chap || !v) return;
-    setShareLooking(true); setShareResult(null);
-    try {
-      const res = await fetch(`/api/quran?chapter=${chap}&verse=${v}`);
-      if (res.ok) {
-        const d = await res.json();
-        setShareResult({ arabic: d.text_uthmani || '', translation: d.translation || '', key: d.verse_key });
-      }
-    } catch { /* silent */ }
-    setShareLooking(false);
-  }
-
-  async function sendShareAyah() {
-    if (!shareResult || !user || !family || !profile) return;
-    const text = `${verseKeyToLabel(shareResult.key)}\n${shareResult.arabic}\n\n"${shareResult.translation}"`;
-    void syncPostToFoundation(text);
-    await supabase.from('family_messages').insert({ family_id: family.id, user_id: user.id, sender_name: profile.name, sender_role: profile.role, content: text });
-    setShowShareAyah(false); setShareInput(''); setShareResult(null);
-  }
-
-  function handleSubmit(e: React.FormEvent) { e.preventDefault(); sendMessage(input); }
-
-  async function toggleRecording() {
-    if (isRecording) {
-      if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
-      setIsRecording(false); return;
+  const toggleRecording = async () => {
+    if (isRecording) { mediaRecorder?.stop(); setIsRecording(false); }
+    else {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mr = new MediaRecorder(s);
+        const chunks: Blob[] = [];
+        mr.ondataavailable = (e) => chunks.push(e.data);
+        mr.onstop = () => { setRecordedBlob(new Blob(chunks, { type: 'audio/webm' })); s.getTracks().forEach(t => t.stop()); };
+        mr.start();
+        setMediaRecorder(mr);
+        setIsRecording(true);
+      } catch (e) { alert('Mic access denied'); }
     }
-    if (!navigator.mediaDevices) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-      mr.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
-      mr.onstop = () => {
-        stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        setRecordedBlob(blob);
-      };
-      mr.start();
-      mediaRecorderRef.current = mr;
-      setIsRecording(true);
-      setTimeout(() => { if (mr.state === 'recording') { mr.stop(); setIsRecording(false); } }, 60000);
-    } catch { /* mic denied */ }
-  }
+  };
 
-  function cancelVoiceNote() { setRecordedBlob(null); audioChunksRef.current = []; }
-
-  async function sendVoiceNote() {
-    if (!recordedBlob) return;
+  const sendVoiceNote = async () => {
+    if (!recordedBlob || !user || !family) return;
     setSendingVoice(true);
-    const fileName = `voice_${Date.now()}.webm`;
-    const { data: uploadData, error } = await supabase.storage.from('voice-notes').upload(fileName, recordedBlob, { contentType: 'audio/webm' });
-    if (!error && uploadData) {
-      const { data: urlData } = supabase.storage.from('voice-notes').getPublicUrl(uploadData.path);
-      if (urlData?.publicUrl) await sendMessage(`[voice:${urlData.publicUrl}]`);
-    }
-    setRecordedBlob(null); audioChunksRef.current = []; setSendingVoice(false);
-  }
+    const path = `chat/${family.id}/${user.id}/${Date.now()}.webm`;
+    const { error: upErr } = await supabase.storage.from('voice-notes').upload(path, recordedBlob);
+    if (upErr) { console.error(upErr); setSendingVoice(false); return; }
+    const { data: q } = supabase.storage.from('voice-notes').getPublicUrl(path);
+    await sendMessage(`[voice:${q.publicUrl}]`);
+    setRecordedBlob(null);
+    setSendingVoice(false);
+  };
 
-  async function updateFamilyIcon(icon: string) {
-    if (!family || profile?.role !== 'parent') return;
-    const cacheBuster = icon.includes('?') ? `&t=${Date.now()}` : `?t=${Date.now()}`;
-    const newIconUrl = icon.includes('http') ? `${icon}${cacheBuster}` : icon;
-    setFamilyIcon(newIconUrl);
-    await supabase.from('families').update({ icon: newIconUrl }).eq('id', family.id);
-  }
+  const cancelVoiceNote = () => setRecordedBlob(null);
 
-  async function deleteMessage(msgId: string) {
-    if (!user) return;
-    setDeletingMsgId(msgId);
-    await supabase.from('family_messages').delete().eq('id', msgId).eq('user_id', user.id);
-    setMessages(prev => prev.filter(m => m.id !== msgId));
-    setSelectedMsgId(null); setDeletingMsgId(null);
-  }
+  const startReply = (m: Message) => { setReplyTo({ id: m.id, sender: m.sender_name, content: m.content }); setSelectedMsgId(null); inputRef.current?.focus(); };
 
-  function startReply(msg: ChatMessage) {
-    setReplyTo({ id: msg.id, sender: msg.sender_name, content: msg.content });
-    setSelectedMsgId(null);
-  }
+  const grouped = useMemo(() => {
+    const list: { date: string; messages: Message[] }[] = [];
+    messages.forEach(m => {
+      const d = formatDateLabel(m.created_at);
+      if (list.length === 0 || list[list.length - 1].date !== d) list.push({ date: d, messages: [m] });
+      else list[list.length - 1].messages.push(m);
+    });
+    return list;
+  }, [messages]);
 
-  async function clearMyChat() {
-    if (!user || !family) return;
-    setClearingChat(true);
-    const now = new Date().toISOString();
-    await supabase.from('chat_clear_timestamps').upsert(
-      { user_id: user.id, family_id: family.id, cleared_at: now },
-      { onConflict: 'user_id,family_id' }
-    );
-    setMyClearedAt(now); setMessages([]); setConfirmClearMyChat(false); setClearingChat(false);
-  }
+  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (input.trim()) sendMessage(input); };
 
-  function formatTime(iso: string) {
-    return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  }
-  function formatDate(iso: string) {
-    const d = new Date(iso), t = new Date(), y = new Date();
-    y.setDate(t.getDate() - 1);
-    if (d.toDateString() === t.toDateString()) return 'Today';
-    if (d.toDateString() === y.toDateString()) return 'Yesterday';
-    return d.toLocaleDateString('en-US', { day: 'numeric', month: 'long' });
-  }
-
-  void myClearedAt;
-
-  const grouped: { date: string; messages: ChatMessage[] }[] = [];
-  for (const msg of messages) {
-    const label = formatDate(msg.created_at);
-    const last = grouped[grouped.length - 1];
-    if (last && last.date === label) last.messages.push(msg);
-    else grouped.push({ date: label, messages: [msg] });
-  }
-
-  if (loading) {
-    return <LoadingBlock fullScreen />;
-  }
-
-  if (typeof window === 'undefined') return <LoadingBlock fullScreen />;
+  if (authLoading || loading) return <LoadingBlock fullScreen />;
 
   return (
     <>
-      {showVideoCall && (
-        <VideoCallModal
-          channelName={family?.id || 'musfam-default'}
-          userId={user?.id || 'anon'}
-          displayName={profile?.name || 'You'}
-          familyName={family?.name || 'Family'}
-          userRole={profile?.role}
-          familyId={family?.id}
-          onClose={() => setShowVideoCall(false)}
-        />
-      )}
-
-      {/* Chat header (z-100 to stay above messages) */}
-      <div className="relative bg-[#2d3a10] text-white px-3 py-2.5 flex items-center justify-between shadow-sm flex-shrink-0 z-[100] overflow-visible batik-overlay rounded-none">
-        
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={() => router.push('/')} title="Back"
-            className="w-8 h-8 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors">
-            <ChevronLeft size={18} className="text-white" />
-          </button>
-          <div className="relative overflow-visible">
-            <input
-              type="file"
-              ref={iconUploadRef}
-              className="hidden"
-              accept="image/*"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file || !user || !family) return;
-                
-                // Optimistic UI Update: Show the image immediately
-                const localUrl = URL.createObjectURL(file);
-                setFamilyIcon(localUrl);
-                
-                const ext = file.name.split('.').pop() || 'jpg';
-                const path = `family_${family.id}.${ext}`;
-                const { data: uploadData, error } = await supabase.storage
-                  .from('avatars')
-                  .upload(path, file, { upsert: true, contentType: file.type });
-                
-                if (!error && uploadData) {
-                  const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
-                  if (urlData?.publicUrl) {
-                    await updateFamilyIcon(urlData.publicUrl);
-                  }
-                } else if (error) {
-                  console.error('Family icon upload error:', error.message);
-                }
-              }}
-            />
-            <button type="button"
-              onClick={() => profile?.role === 'parent' && iconUploadRef.current?.click()}
-              className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold text-base select-none overflow-hidden relative z-10 hover:bg-white/30 active:scale-95 transition-all"
-              title={profile?.role === 'parent' ? 'Click to change group icon' : undefined}>
-              {familyIcon && familyIcon.length > 0 && familyIcon !== 'upload' ? (
-                familyIcon.includes('/') ? (
-                  <img src={familyIcon} alt="Group" className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-lg">{familyIcon}</span>
-                )
-              ) : (
-                <div className="w-full h-full flex items-center justify-center bg-white/10 text-white/50">
-                   <Camera size={18} />
+      <div className="flex flex-col h-full bg-[#E5DDD5]">
+        {/* --- Truly Magnetic Header Overlay --- */}
+        <div className="fixed top-0 left-0 right-0 z-50 flex flex-col shadow-lg max-w-md mx-auto">
+          <div className="flex-shrink-0 bg-[#2d3a10] px-4 py-3.5 flex items-center justify-between border-b border-white/5 relative overflow-hidden batik-overlay">
+            <div className="flex items-center gap-3">
+              <button onClick={() => router.push('/')} className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white active:scale-90">
+                <ChevronLeft size={18} />
+              </button>
+              <div className="flex items-center gap-2.5">
+                <div onClick={() => iconUploadRef.current?.click()} className="cursor-pointer hover:opacity-80 transition-opacity w-9 h-9 rounded-full bg-white/20 border border-white/20 flex items-center justify-center font-bold text-white text-sm shadow-inner overflow-hidden">
+                  <input type="file" accept="image/*" ref={iconUploadRef} onChange={uploadFamilyIcon} className="hidden" />
+                  {familyIcon ? <img src={familyIcon} alt="F" className="w-full h-full object-cover" /> : (family?.name?.[0]?.toUpperCase() || 'F')}
                 </div>
-              )}
-            </button>
-          </div>
-          <div>
-            <p className="font-bold text-sm leading-tight">{family?.name || 'Family'} Group</p>
-            <p className="text-[10px] text-white/65 leading-tight">
-              {onlineMembers.length > 0
-                ? onlineMembers.map(m => m.name.split(' ')[0]).join(', ')
-                : 'Loading members...'}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button type="button" title="Video Call" onClick={() => setShowVideoCall(true)}
-            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
-            <Video size={16} className="text-white/90" />
-          </button>
-          <button type="button" title="Clear chat" onClick={() => setConfirmClearMyChat(true)}
-            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
-            <Trash2 size={15} className="text-white/80" />
-          </button>
-        </div>
-      </div>
-      
-      {/* --- DAILY MISSION HEADER (Mini Goal) --- */}
-      {dailyMission && !missionLoading && (
-        <div className="relative px-4 pb-3 pt-1 batik-overlay border-t border-white/5 overflow-hidden">
-          {/* Main Container with Glassmorphism */}
-          <div className="absolute inset-0 bg-[#1a2408]/80 backdrop-blur-md" />
-          
-          <div className="relative bg-white/5 rounded-2xl px-4 py-3 border border-white/10 flex items-center gap-4 shadow-xl">
-            <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0 border border-white/10 shadow-inner">
-              <BookOpen size={20} className="text-yellow-400 drop-shadow-sm" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-white/40 font-bold uppercase tracking-[0.2em] mb-0.5">Today's Mission</p>
-              <p className="text-[13px] text-white font-semibold leading-snug">
-                {dailyMission.parent_override_text || dailyMission.generated_text}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Scrollable chat body */}
-      <main className="flex-1 overflow-y-auto hide-scrollbar bg-[#E5DDD5] pb-[130px]">
-        <div className="mt-2 space-y-1 px-2">
-          {grouped.map((group) => (
-            <div key={group.date} className="space-y-1">
-              <div className="flex justify-center my-3">
-                <span className="bg-[#E1F3FB]/80 text-[#2d3a10] text-[10px] font-bold px-3 py-1 rounded-lg shadow-sm uppercase tracking-wider">
-                  {group.date}
-                </span>
+                <div>
+                  <h2 className="text-sm font-extrabold text-white tracking-tight leading-none mb-1">{family?.name || 'Loading...'}</h2>
+                  <span className="text-[9px] text-[#c8a84b] font-bold uppercase tracking-widest flex items-center gap-1">
+                    <span className="w-1 h-1 rounded-full bg-[#c8a84b] animate-pulse" />
+                    Family Chat
+                  </span>
+                </div>
               </div>
-              {group.messages.map((msg) => {
-                const isMe = msg.user_id === user?.id;
-                const isAyah = /^[A-Z].*\d+:\d+\n/.test(msg.content) || msg.content.startsWith('📖');
-                const isVoice = msg.content.startsWith('[voice:');
-                const isReply = msg.content.startsWith('[reply:');
-                const voiceUrl = isVoice ? msg.content.slice(7, -1) : null;
-                const isSelected = selectedMsgId === msg.id;
-                let replyHeader = '';
-                let mainContent = msg.content;
-                if (isReply) {
-                  const nl = msg.content.indexOf('\n');
-                  if (nl !== -1) {
-                    replyHeader = msg.content.slice(0, nl).replace('[reply:', '').replace(']', '').trim();
-                    mainContent = msg.content.slice(nl + 1);
-                  }
-                }
-                return (
-                  <div key={msg.id}>
-                    <div
-                      className={`flex ${isMe ? 'justify-end' : 'justify-start'} px-1 transition-colors ${isSelected ? 'bg-[#2d3a10]/10 rounded-xl' : ''}`}
-                      onClick={() => setSelectedMsgId(isSelected ? null : msg.id)}>
-                      <div className={`max-w-[80%] rounded-xl px-3 py-2 shadow-sm relative ${
-                        isMe ? 'bg-[#DCF8C6] rounded-tr-none' : 'bg-white rounded-tl-none'
-                      } ${isAyah ? 'border border-[#5a6b28]/30' : ''}`}>
-                        {!isMe && (
-                          <p className={`text-[10px] font-bold mb-0.5 ${msg.sender_role === 'parent' ? 'text-[#2d3a10]' : 'text-[#8b6914]'}`}>
-                            {msg.sender_name}
-                          </p>
-                        )}
-                        {isReply && replyHeader && (
-                          <div className="bg-black/5 rounded-lg px-2 py-1 mb-1.5 border-l-2 border-[#2d3a10]/40">
-                            <p className="text-[9px] font-bold text-[#2d3a10]/70">{replyHeader}</p>
-                          </div>
-                        )}
-                        {isVoice && voiceUrl ? (
-                          <audio controls src={voiceUrl} className="w-[200px] h-9 my-0.5" style={{ colorScheme: 'light' }} />
-                        ) : isAyah ? (
-                          <AyahBubble content={mainContent} />
-                        ) : (
-                          <p className="text-sm text-gray-800 break-words whitespace-pre-wrap leading-relaxed">{mainContent}</p>
-                        )}
-                        <div className="flex items-center justify-end gap-1 mt-0.5">
-                          <span className="text-[9px] text-gray-400 font-medium">{formatTime(msg.created_at)}</span>
-                          {isMe && <span className="text-[#34B7F1] text-[10px]">✓✓</span>}
-                        </div>
-                        <div className={`absolute top-0 w-2.5 h-2.5 ${isMe
-                          ? '-right-2 bg-[#DCF8C6] [clip-path:polygon(0_0,0_100%,100%_0)]'
-                          : '-left-2 bg-white [clip-path:polygon(100%_0,100%_100%,0_0)]'}`} />
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <div className={`flex items-center gap-2 px-3 py-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
-                        <button type="button" onClick={() => startReply(msg)}
-                          className="flex items-center gap-1 bg-white rounded-full px-3 py-1 shadow-sm text-[11px] font-bold text-[#2d3a10] border border-black/5">
-                          <CornerUpLeft size={11} /> Reply
-                        </button>
-                        {isMe && (
-                          <button type="button" onClick={() => deleteMessage(msg.id)} disabled={deletingMsgId === msg.id}
-                            className="flex items-center gap-1 bg-red-50 rounded-full px-3 py-1 shadow-sm text-[11px] font-bold text-red-500 border border-red-100 disabled:opacity-50">
-                            {deletingMsgId === msg.id ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Delete
-                          </button>
-                        )}
-                      </div>
-                    )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setShowVideoCall(true)} className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
+                <Video size={16} className="text-white/90" />
+              </button>
+              <button onClick={() => setConfirmClearMyChat(true)} className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 hover:bg-white/20">
+                <Trash2 size={15} className="text-white/80" />
+              </button>
+            </div>
+          </div>
+          {dailyMission && (
+            <div className="bg-[#2d3a10] batik-overlay relative overflow-hidden">
+               <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
+               <button onClick={() => { window.location.href = '/?tab=missions&action=chat'; }} className="w-full px-4 py-3 flex items-center gap-3 active:bg-white/5 transition-colors text-left">
+                <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0 border border-white/10 shadow-inner">
+                  <BookOpen size={18} className="text-yellow-400 opacity-90" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[9px] text-white/40 font-bold uppercase tracking-[0.2em] mb-0.5">Today's Mini Goal</p>
+                    <div className="text-[#c8a84b] text-[8px] font-extrabold px-1.5 py-0.5 rounded border border-[#c8a84b]/30 uppercase tracking-widest leading-none">CLAIM PROGRESS</div>
                   </div>
-                );
-              })}
+                  <p className="text-xs text-white font-medium leading-tight truncate opacity-85">{dailyMission.parent_override_text || dailyMission.generated_text}</p>
+                </div>
+              </button>
             </div>
-          ))}
-          <div ref={bottomRef} className="h-2" />
+          )}
         </div>
-      </main>
 
-      {/* Fixed bottom input */}
-      <div className="fixed bottom-16 left-0 right-0 z-20 max-w-md mx-auto">
-        <div className="flex flex-col bg-[#F0F0F0]/90 backdrop-blur-md border-t border-black/5">
-          {replyTo && (
-            <div className="flex items-center gap-2 px-4 pt-2 pb-1">
-              <div className="flex-1 bg-white rounded-xl px-3 py-1.5 border-l-2 border-[#2d3a10] min-w-0">
-                <p className="text-[10px] font-bold text-[#2d3a10]">{replyTo.sender}</p>
-                <p className="text-[11px] text-gray-500 truncate">{replyTo.content.length > 50 ? replyTo.content.slice(0, 50) + '…' : replyTo.content}</p>
+        <main className="flex-1 overflow-y-auto hide-scrollbar bg-[#E5DDD5] pb-[130px] pt-[115px]">
+          <div className="mt-2 space-y-1 px-2">
+            {grouped.map((group) => (
+              <div key={group.date} className="space-y-1">
+                <div className="flex justify-center my-3">
+                  <span className="bg-[#E1F3FB]/80 text-[#2d3a10] text-[10px] font-bold px-3 py-1 rounded-lg shadow-sm uppercase tracking-wider">{group.date}</span>
+                </div>
+                {group.messages.map((msg) => {
+                  const isMe = msg.user_id === user?.id;
+                  const isAyah = /^[A-Z].*\d+:\d+\n/.test(msg.content) || msg.content.startsWith('📖');
+                  const isVoice = msg.content.startsWith('[voice:');
+                  const isReply = msg.content.startsWith('[reply:');
+                  const voiceUrl = isVoice ? msg.content.slice(7, -1) : null;
+                  const isSelected = selectedMsgId === msg.id;
+                  let replyHeader = ''; let mainContent = msg.content;
+                  if (isReply) {
+                    const nl = msg.content.indexOf('\n');
+                    if (nl !== -1) { replyHeader = msg.content.slice(0, nl).replace('[reply:', '').replace(']', '').trim(); mainContent = msg.content.slice(nl + 1); }
+                  }
+                  return (
+                    <div key={msg.id}>
+                      <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} px-1 transition-colors ${isSelected ? 'bg-[#2d3a10]/10 rounded-xl' : ''}`}
+                        onClick={() => setSelectedMsgId(isSelected ? null : msg.id)}>
+                        <div className={`max-w-[80%] rounded-xl px-3 py-2 shadow-sm relative ${isMe ? 'bg-[#DCF8C6] rounded-tr-none' : 'bg-white rounded-tl-none'} ${isAyah ? 'border border-[#5a6b28]/30' : ''}`}>
+                          {!isMe && <p className={`text-[10px] font-bold mb-0.5 ${msg.sender_role === 'parent' ? 'text-[#2d3a10]' : 'text-[#8b6914]'}`}>{msg.sender_name}</p>}
+                          {isReply && replyHeader && <div className="bg-black/5 rounded-lg px-2 py-1 mb-1.5 border-l-2 border-[#2d3a10]/40"><p className="text-[9px] font-bold text-[#2d3a10]/70">{replyHeader}</p></div>}
+                          {isVoice && voiceUrl ? <audio controls src={voiceUrl} className="w-[200px] h-9 my-0.5" /> : isAyah ? <AyahBubble content={mainContent} /> : <p className="text-sm text-gray-800 break-words whitespace-pre-wrap leading-relaxed">{mainContent}</p>}
+                          <div className="flex items-center justify-end gap-1 mt-0.5"><span className="text-[9px] text-gray-400 font-medium">{formatTime(msg.created_at)}</span>{isMe && <span className="text-[#34B7F1] text-[10px]">✓✓</span>}</div>
+                          <div className={`absolute top-0 w-2.5 h-2.5 ${isMe ? '-right-2 bg-[#DCF8C6] [clip-path:polygon(0_0,0_100%,100%_0)]' : '-left-2 bg-white [clip-path:polygon(100%_0,100%_100%,0_0)]'}`} />
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <div className={`flex items-center gap-2 px-3 py-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                          <button onClick={() => startReply(msg)} className="flex items-center gap-1 bg-white rounded-full px-3 py-1 shadow-sm text-[11px] font-bold text-[#2d3a10] border border-black/5"><CornerUpLeft size={11} /> Reply</button>
+                          {isMe && <button onClick={() => deleteMessage(msg.id)} disabled={deletingMsgId === msg.id} className="flex items-center gap-1 bg-red-50 rounded-full px-3 py-1 shadow-sm text-[11px] font-bold text-red-500 border border-red-100 disabled:opacity-50">{deletingMsgId === msg.id ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Delete</button>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              <button type="button" title="Cancel reply" onClick={() => setReplyTo(null)} className="text-gray-400 flex-shrink-0">
-                <X size={16} />
-              </button>
-            </div>
-          )}
-          {recordedBlob ? (
-            <div className="flex items-center gap-2 px-3 pb-2 pt-2">
-              <div className="flex-1 bg-white border border-black/10 rounded-full px-4 py-2.5 flex items-center gap-2 shadow-inner">
-                <Mic size={14} className="text-[#5a6b28] flex-shrink-0" />
-                <span className="text-sm text-gray-600 flex-1">Voice note ready</span>
-                <button type="button" title="Cancel voice note" onClick={cancelVoiceNote} className="text-gray-400 hover:text-red-400 transition-colors">
-                  <X size={15} />
-                </button>
+            ))}
+            <div ref={bottomRef} className="h-2" />
+          </div>
+        </main>
+
+        <div className="fixed bottom-16 left-0 right-0 z-20 max-w-md mx-auto">
+          <div className="flex flex-col bg-[#F0F0F0]/90 backdrop-blur-md border-t border-black/5 shadow-2xl">
+            {replyTo && (
+              <div className="flex items-center gap-2 px-4 pt-2 pb-1">
+                <div className="flex-1 bg-white rounded-xl px-3 py-1.5 border-l-2 border-[#2d3a10] min-w-0">
+                  <p className="text-[10px] font-bold text-[#2d3a10]">{replyTo.sender}</p>
+                  <p className="text-[11px] text-gray-500 truncate">{replyTo.content.length > 50 ? replyTo.content.slice(0, 50) + '…' : replyTo.content}</p>
+                </div>
+                <button title="Cancel reply" onClick={() => setReplyTo(null)} className="text-gray-400 flex-shrink-0"><X size={16} /></button>
               </div>
-              <button type="button" onClick={sendVoiceNote} disabled={sendingVoice}
-                className="w-10 h-10 rounded-full bg-[#5a6b28] text-white flex items-center justify-center shadow-md flex-shrink-0 disabled:opacity-50">
-                {sendingVoice ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className="ml-0.5" />}
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="flex items-center gap-2 px-3 pb-2 pt-2">
-              <div className={`flex-1 bg-white border rounded-full px-4 py-2.5 flex items-center shadow-inner transition-colors ${isRecording ? 'border-red-300 bg-red-50' : 'border-black/10'}`}>
-                {isRecording ? (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-                    <span className="flex-1 text-sm text-red-500 font-medium ml-2">Recording...</span>
-                  </>
-                ) : (
-                  <input ref={inputRef} type="text" value={input} onChange={e => setInput(e.target.value)}
-                    placeholder="Type a message..." className="flex-1 text-sm focus:outline-none bg-transparent" />
-                )}
-                {!isRecording && (
-                  <>
-                    <button type="button" onClick={() => setShowShareAyah(true)} className="text-[#2d3a10]/50 ml-2 flex-shrink-0" title="Share Ayah">
-                      <BookOpen size={16} />
-                    </button>
-                    <button type="button" onClick={() => router.push('/quran?tab=khatam')} className="text-[#2d3a10]/50 ml-1 flex-shrink-0" title="Qur'anther">
-                      <Users size={16} />
-                    </button>
-                  </>
-                )}
-                <button type="button" onClick={toggleRecording}
-                  className={`ml-1.5 flex-shrink-0 transition-colors ${isRecording ? 'text-red-500' : 'text-[#2d3a10]/50'}`}
-                  title={isRecording ? 'Stop recording' : 'Record voice note'}>
-                  {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
-                </button>
+            )}
+            {recordedBlob ? (
+              <div className="flex items-center gap-2 px-3 pb-2 pt-2">
+                <div className="flex-1 bg-white border border-black/10 rounded-full px-4 py-2.5 flex items-center gap-2 shadow-inner">
+                  <Mic size={14} className="text-[#5a6b28] flex-shrink-0" /><span className="text-sm text-gray-600 flex-1">Voice note ready</span>
+                  <button title="Cancel" onClick={cancelVoiceNote} className="text-gray-400 hover:text-red-400"><X size={15} /></button>
+                </div>
+                <button onClick={sendVoiceNote} disabled={sendingVoice} className="w-10 h-10 rounded-full bg-[#5a6b28] text-white flex items-center justify-center shadow-md disabled:opacity-50">{sendingVoice ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className="ml-0.5" />}</button>
               </div>
-              {!isRecording && (
-                <button type="submit" disabled={sending || !input.trim()}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${
-                    input.trim() ? 'bg-[#5a6b28] text-white shadow-md' : 'bg-gray-200 text-gray-400'
-                  }`}>
-                  {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className="ml-0.5" />}
-                </button>
-              )}
-            </form>
-          )}
+            ) : (
+              <form onSubmit={handleSubmit} className="flex items-center gap-2 px-3 pb-2 pt-2">
+                <div className={`flex-1 bg-white border rounded-full px-4 py-2.5 flex items-center shadow-inner transition-colors ${isRecording ? 'border-red-300 bg-red-50' : 'border-black/10'}`}>
+                  {isRecording ? <><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /><span className="flex-1 text-sm text-red-500 font-medium ml-2">Recording...</span></> : (
+                    <input ref={inputRef} type="text" value={input} onChange={e => setInput(e.target.value)} placeholder="Type a message..." className="flex-1 text-sm focus:outline-none bg-transparent" />
+                  )}
+                  {!isRecording && (
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => setShowShareAyah(true)} className="p-1 px-2 text-[#2d3a10]/50 hover:text-[#2d3a10]"><BookOpen size={16} /></button>
+                      <button type="button" onClick={() => router.push('/quran?tab=khatam')} className="p-1 px-2 text-[#2d3a10]/50 hover:text-[#2d3a10]"><Users size={16} /></button>
+                    </div>
+                  )}
+                  <button type="button" onClick={toggleRecording} className={`ml-1.5 flex-shrink-0 transition-colors ${isRecording ? 'text-red-500' : 'text-[#2d3a10]/50'}`}>{isRecording ? <MicOff size={16} /> : <Mic size={16} />}</button>
+                </div>
+                {!isRecording && <button type="submit" disabled={sending || !input.trim()} className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${input.trim() ? 'bg-[#5a6b28] text-white shadow-md' : 'bg-gray-200 text-gray-400'}`}>{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className="ml-0.5" />}</button>}
+              </form>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Share Ayah modal */}
+      {/* --- Share Ayah Modal (Refined) --- */}
       {showShareAyah && (
-        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={e => { if (e.target === e.currentTarget) { setShowShareAyah(false); setShareInput(''); setShareResult(null); setShareSurahMatch(null); setShareAyahNum(''); } }}>
-          <div
-            ref={shareSwipe.sheetRef}
+        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div 
             onTouchStart={shareSwipe.handleTouchStart}
             onTouchMove={shareSwipe.handleTouchMove}
             onTouchEnd={shareSwipe.handleTouchEnd}
-            className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-gray-800">Share Quran Ayah</h3>
-              <button type="button" title="Close" onClick={() => { setShowShareAyah(false); setShareInput(''); setShareResult(null); setShareSurahMatch(null); setShareAyahNum(''); }}
-                className="text-gray-400"><X size={20} /></button>
-            </div>
-            <div className="flex gap-2">
-              <input type="text" value={shareInput} onChange={e => setShareInput(e.target.value)}
-                placeholder="2:255, Al-Baqarah, mercy..." onKeyDown={e => e.key === 'Enter' && lookupShareVerse()}
-                className="flex-1 bg-gray-100 rounded-xl px-4 py-2.5 text-sm focus:outline-none" />
-              <button type="button" onClick={lookupShareVerse} disabled={shareLooking}
-                className="bg-[#2d3a10] text-white px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50">
-                {shareLooking && !shareSurahMatch ? <Loader2 size={16} className="animate-spin" /> : 'Find'}
-              </button>
+            ref={shareSwipe.sheetRef} 
+            className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl flex flex-col transition-transform duration-300 h-[85vh] sm:h-auto sm:max-h-[80vh]"
+          >
+            <div className="flex justify-center pb-4 sm:hidden"><div className="w-10 h-1 bg-gray-200 rounded-full" /></div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                {quran.surahMatch ? (
+                  <button onClick={() => quran.setSurahMatch(null)} className="p-1 -ml-1 text-gray-400"><ArrowLeft size={18}/></button>
+                ) : <BookOpen size={18} className="text-[#2d3a10]" />}
+                <h3 className="text-lg font-bold text-gray-800">{quran.surahMatch ? quran.surahMatch.name : 'Share Quran Ayah'}</h3>
+              </div>
+              <button onClick={() => { setShowShareAyah(false); quran.reset(); }} className="text-gray-400"><X size={20} /></button>
             </div>
 
-            {/* Surah Match → Ayah Number Picker */}
-            {shareSurahMatch && !shareResult && (
-              <div className="bg-[#5a6b28]/5 rounded-2xl p-4 border border-[#5a6b28]/20 space-y-3 animate-in slide-in-from-top-2">
-                <div className="flex items-center justify-between">
-                   <p className="text-sm font-bold text-[#2d3a10]">Surah {shareSurahMatch.num} matched</p>
-                   <p className="text-[10px] text-gray-400 font-bold uppercase">{shareSurahMatch.total} Verses</p>
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="number" 
-                    min={1} 
-                    max={shareSurahMatch.total}
-                    value={shareAyahNum}
-                    onChange={e => setShareAyahNum(e.target.value)}
-                    placeholder={`Enter Ayah 1–${shareSurahMatch.total}`}
-                    className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none ring-1 ring-inset ring-transparent focus:ring-[#5a6b28]/30"
-                  />
-                  <button 
-                    type="button"
-                    disabled={!shareAyahNum || shareLooking}
-                    onClick={() => pickShareAyah(shareSurahMatch.num, parseInt(shareAyahNum, 10))}
-                    className="bg-[#5a6b28] text-white px-5 rounded-xl text-sm font-bold disabled:opacity-50 transition-all">
-                    {shareLooking ? <Loader2 size={16} className="animate-spin" /> : 'Pick'}
-                  </button>
-                </div>
-              </div>
-            )}
+            <div className="relative mb-4">
+              <input type="text" value={quran.query} onChange={e => { quran.setQuery(e.target.value); quran.search(e.target.value); }}
+                placeholder="Search Surah or Theme (e.g. 'Patience')" className="w-full bg-gray-100 border-none rounded-2xl px-5 py-3.5 pr-12 text-sm font-medium focus:ring-2 focus:ring-[#2d3a10]/10 transition-all"/>
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400">{quran.searching ? <Loader2 size={18} className="animate-spin"/> : <Search size={18}/>}</div>
+            </div>
 
-            {shareResult && (
-              <div className="bg-[#DCF8C6]/40 rounded-2xl p-4 border border-[#DCF8C6] space-y-2 animate-in zoom-in-95">
-                <div className="flex items-center justify-between mb-1">
-                   <p className="text-xs font-bold text-[#2d3a10]/60 uppercase tracking-wider">{verseKeyToLabel(shareResult.key)}</p>
-                   {shareSurahMatch && (
-                     <button type="button" onClick={() => { setShareResult(null); setShareAyahNum(''); }} 
-                       className="text-[10px] font-bold text-[#5a6b28] hover:underline">Pick another</button>
-                   )}
+            <div className="flex-1 overflow-y-auto hide-scrollbar space-y-2 pb-4">
+              {quran.surahMatch ? (
+                <div className="space-y-4">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Select Ayah from {quran.surahMatch.name}</p>
+                  <div className="flex gap-2">
+                    <input type="number" value={quran.ayahInput} onChange={e => quran.setAyahInput(e.target.value)} placeholder={`1-${quran.surahMatch.total}`} className="flex-1 bg-gray-100 rounded-xl px-4 py-3 text-sm font-bold"/>
+                    <button onClick={() => quran.loadSurahVerses(quran.surahMatch!.num, parseInt(quran.ayahInput) || 1)} className="bg-[#2d3a10] text-white px-6 rounded-xl font-bold text-sm">Load</button>
+                  </div>
+                  {quran.verseLoading ? <div className="flex justify-center p-8"><Loader2 className="animate-spin text-[#2d3a10]"/></div> : (
+                    <div className="divide-y divide-gray-50">
+                      {quran.verses.map(v => (
+                        <button key={v.key} onClick={() => { sendMessage(`📖 ${v.key}\n${v.arabic}\n${v.translation}`); setShowShareAyah(false); quran.reset(); }}
+                          className="w-full py-4 px-2 text-left hover:bg-gray-50 flex items-start gap-3 transition-colors group">
+                          <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-400 group-hover:bg-[#2d3a10] group-hover:text-white transition-colors">{v.key.split(':')[1]}</div>
+                          <div className="flex-1"><p className="text-right text-lg text-[#2d3a10] mb-1" style={{fontFamily: "'Amiri Quran', serif"}}>{v.arabic}</p><p className="text-xs text-gray-500 italic">"{v.translation.slice(0, 80)}..."</p></div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <p className="text-right text-lg text-[#2d3a10] leading-snug" style={{ fontFamily: "'Amiri Quran', 'Amiri', serif" }}>
-                  {shareResult.arabic}
-                </p>
-                <p className="text-xs text-gray-600 italic line-clamp-3 border-t border-white/20 pt-2">&quot;{shareResult.translation}&quot;</p>
-                <button type="button" onClick={sendShareAyah}
-                  className="w-full bg-[#5a6b28] text-white font-bold py-2.5 rounded-xl text-sm mt-2 shadow-sm active:scale-95 transition-all">
-                  Share to Group
-                </button>
-              </div>
-            )}
+              ) : quran.results.length > 0 ? (
+                <div className="space-y-1">
+                  {quran.results.map((r) => (
+                    <button key={r.verse_key} onClick={() => { sendMessage(`📖 ${r.verse_key}\n${r.text}\n${r.translations?.[0]?.text?.replace(/<[^>]*>/g, '')}`); setShowShareAyah(false); quran.reset(); }}
+                      className="w-full p-4 rounded-2xl bg-white border border-gray-100 hover:border-[#2d3a10]/30 hover:bg-gray-50/50 transition-all text-left">
+                      <div className="flex items-center justify-between mb-2"><span className="text-[10px] font-bold text-[#2d3a10] uppercase tracking-widest">{r.verse_key}</span><ChevronRight size={14} className="text-gray-300"/></div>
+                      <p className="text-right text-lg text-[#2d3a10] truncate mb-1" style={{fontFamily: "'Amiri Quran', serif"}}>{r.text}</p>
+                      <p className="text-xs text-gray-500 truncate italic">"{r.translations?.[0]?.text?.replace(/<[^>]*>/g, '')}"</p>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-center opacity-40">
+                  <BookOpen size={40} className="mb-3"/>
+                  <p className="text-sm font-medium">Search for an Ayah or Surah<br/>to share with your family</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Confirm: Clear Chat */}
-      {confirmClearMyChat && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 px-6">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-sm">
-            <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
-              <Trash2 size={22} className="text-red-500" />
-            </div>
-            <h3 className="font-extrabold text-gray-800 text-center text-lg mb-1">Clear Chat for Me?</h3>
-            <p className="text-sm text-gray-500 text-center mb-5">All messages will be hidden from your view only. Other members still see them.</p>
-            <div className="flex gap-3">
-              <button type="button" onClick={() => setConfirmClearMyChat(false)}
-                className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold text-sm">Cancel</button>
-              <button type="button" onClick={clearMyChat} disabled={clearingChat}
-                className="flex-1 py-3 rounded-xl bg-red-500 text-white font-bold text-sm disabled:opacity-50">
-                {clearingChat ? <Loader2 size={16} className="animate-spin mx-auto" /> : 'Clear'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showVideoCall && <VideoCallModal channelName={`call-${family?.id}`} userId={user!.id} displayName={profile!.name} familyName={family?.name || 'Musfam'} userRole={profile!.role} familyId={family?.id} onClose={() => setShowVideoCall(false)} />}
     </>
   );
 }

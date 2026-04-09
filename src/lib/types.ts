@@ -39,6 +39,7 @@ export interface MissionCompletion {
   mission_id: string | null;
   daily_mission_id?: string | null;
   completed_at: string;
+  date?: string;
   reflection_text?: string;
   verse_id?: number;
   points_earned: number;
@@ -46,7 +47,9 @@ export interface MissionCompletion {
   submitter_name?: string;
   guardian_name?: string;
   guardian_feedback?: string;
+  parent_feedback?: string;
   proof_url?: string;
+  proof_note?: string;
 }
 
 export interface Reflection {
@@ -149,11 +152,11 @@ export interface DailyMission {
   date: string;
   verse_key: string;
   generated_text: string;
-  generated_prompt: string;
+  generated_prompt?: string;
   parent_override_text?: string;
   parent_override_prompt?: string;
   is_parent_override?: boolean;
-  points: number;
+  points?: number;
   created_at: string;
 }
 

@@ -1,241 +1,295 @@
 import { supabase } from './supabase';
-import { Mission, MissionCompletion, Reflection, ActivityEntry, Reward, Profile, DailyMission } from './types';
-import { generateDailyMissionSemantic } from './missionGenerator';
-import { 
-  syncGoalToFoundation, syncActivityToFoundation, 
-  syncPostToFoundation, syncCommentToFoundation,
-  syncGoalProgressToFoundation
-} from './quran-foundation-sync';
+import { Mission, DailyMission, MissionCompletion, Points, ActivityEntry, Reward, PendingApproval, QuranRead } from './types';
+import { syncActivityToFoundation, syncGoalProgressToFoundation, syncPostToFoundation } from './quran-foundation-sync';
 
-export interface VerseOfDay {
-  verse_key: string;
-  text_arabic: string;
-  translation: string;
-  surah_name?: string;
-  ayah_number?: string;
-}
+// --- CORE MISSIONS ---
 
-// 🛡️ MUSFAM STORE: THE ABSOLUTE TRUTH (HIGH-LEVEL CLAUDE EDITION)
-// Stable, Fast, Deterministic, and Built for Family Spiritual Growth.
+export async function getDailyMission(
+  familyId: string, 
+  date: string, 
+  verseKey?: string, 
+  trans?: string, 
+  familyName?: string
+): Promise<DailyMission | null> {
+  const { data: existing } = await supabase.from('daily_missions').select('*').eq('family_id', familyId).eq('date', date).maybeSingle();
+  if (existing) return existing;
 
-export async function getDailyMission(familyId: string, _date: string, _verseKey: string, verseText?: string, familyName?: string): Promise<DailyMission | null> {
-  const { data: existing } = await supabase.from('daily_missions').select('*').eq('family_id', familyId).eq('date', _date).maybeSingle();
-  const isPlaceholder = existing && (existing.generated_text || '').includes('🛡️ GENERATING');
-  const isStale = existing && existing.verse_key !== _verseKey;
-  
-  if (isStale) {
-    // 🛡️ FRESH START: If the verse changes, the mission is NEW.
-    // We clear old completions so the family can experience the new mission.
-    await supabase.from('mission_completions').delete().eq('family_id', familyId).eq('date', _date).is('mission_id', null);
-  }
+  if (!verseKey) return null;
 
-  if (existing && !isPlaceholder && !isStale) return existing as DailyMission;
-  
-  let finalVerseText = verseText;
-  if (!finalVerseText) {
-    try {
-      const [chap, ay] = _verseKey.split(':');
-      const res = await fetch(`https://api.quran.com/api/v4/verses/by_key/${_verseKey}?translations=131&fields=text_uthmani`);
-      if (res.ok) {
-        const d = await res.json();
-        finalVerseText = d.verse?.translations?.[0]?.text || '';
-      }
-    } catch { /* ignore */ }
-  }
+  const [ch, ay] = verseKey.split(':');
+  const SURAH_NAMES: Record<number, string> = {
+    1:'Al-Fatihah',2:'Al-Baqarah',3:'Ali Imran',4:'An-Nisa',5:'Al-Maidah',
+    6:'Al-Anam',7:'Al-Araf',9:'At-Tawbah',10:'Yunus',12:'Yusuf',13:'Ar-Rad',
+    14:'Ibrahim',15:'Al-Hijr',16:'An-Nahl',17:'Al-Isra',18:'Al-Kahf',19:'Maryam',
+    20:'Ta-Ha',24:'An-Nur',25:'Al-Furqan',28:'Al-Qasas',29:'Al-Ankabut',
+    30:'Ar-Rum',31:'Luqman',33:'Al-Ahzab',36:'Ya-Sin',38:'Sad',39:'Az-Zumar',
+    40:'Ghafir',41:'Fussilat',42:'Ash-Shura',47:'Muhammad',48:'Al-Fath',
+    49:'Al-Hujurat',50:'Qaf',51:'Adh-Dhariyat',53:'An-Najm',54:'Al-Qamar',
+    55:'Ar-Rahman',56:'Al-Waqiah',57:'Al-Hadid',58:'Al-Mujadila',59:'Al-Hashr',
+    62:'Al-Jumuah',63:'Al-Munafiqun',64:'At-Taghabun',65:'At-Talaq',
+    67:'Al-Mulk',68:'Al-Qalam',73:'Al-Muzzammil',74:'Al-Muddaththir',
+    75:'Al-Qiyamah',76:'Al-Insan',78:'An-Naba',79:'An-Naziat',80:'Abasa',
+    81:'At-Takwir',82:'Al-Infitar',84:'Al-Inshiqaq',87:'Al-Ala',89:'Al-Fajr',
+    91:'Ash-Shams',92:'Al-Layl',93:'Ad-Duha',94:'Al-Inshirah',96:'Al-Alaq',
+    97:'Al-Qadr',99:'Az-Zalzalah',100:'Al-Adiyat',103:'Al-Asr',104:'Al-Humazah',
+    107:'Al-Maun',108:'Al-Kawthar',109:'Al-Kafirun',110:'An-Nasr',111:'Al-Masad',
+    112:'Al-Ikhlas',113:'Al-Falaq',114:'An-Nas',
+  };
+  const surahName = SURAH_NAMES[parseInt(ch)];
+  const verseRef = surahName ? `${surahName} ${ch}:${ay}` : `Surah ${ch}:${ay}`;
+  const transSnippet = trans ? `"${trans.slice(0, 100)}${trans.length > 100 ? '...' : ''}"` : verseRef;
 
-  const { missionText, reflectionPrompt, verseKey } = await generateDailyMissionSemantic(new Date(_date), finalVerseText, _verseKey, familyName);
-  const { data: created, error } = await supabase.from('daily_missions').upsert({
-    id: existing?.id,
+  const templates = [
+    `Today's goal: Reflect on ${verseRef} — ${transSnippet}. Share one way your family can live by this verse today.`,
+    `Family challenge: Read and discuss ${verseRef} together. How does ${transSnippet} apply to your daily life?`,
+    `Spiritual goal: Memorize or recite ${verseRef}. Then share a reflection on ${transSnippet} with your family.`,
+  ];
+  const dayOfYear = Math.floor((new Date(date).getTime() - new Date(new Date(date).getFullYear(), 0, 0).getTime()) / 86400000);
+  const generated_text = templates[dayOfYear % templates.length];
+
+  const newMission = {
     family_id: familyId,
-    date: _date,
+    date,
     verse_key: verseKey,
-    generated_text: missionText,
-    parent_override_prompt: reflectionPrompt
-  }, { onConflict: 'family_id, date' }).select().single();
-  if (error) return existing ? existing as DailyMission : null;
-  return created as DailyMission;
+    generated_text,
+  };
+
+  const { data, error } = await supabase.from('daily_missions').insert(newMission).select().maybeSingle();
+  if (error) {
+    // If there's a race condition and a duplicate key is triggered, simply fetch it
+    if (error.message.includes('duplicate key value')) {
+      const { data: recovered } = await supabase.from('daily_missions').select('*').eq('family_id', familyId).eq('date', date).maybeSingle();
+      return recovered;
+    }
+    console.error('Daily Mission Insert Error:', error.message);
+    return null;
+  }
+  return data || null;
 }
 
-export async function hasCompletedDailyMission(userId: string, familyId: string, date: string): Promise<boolean> {
-  const { data: missions } = await supabase.from('daily_missions').select('id').eq('family_id', familyId).eq('date', date);
-  if (!missions || missions.length === 0) return false;
-  const { count } = await supabase.from('mission_completions').select('*', { count: 'exact', head: true }).eq('user_id', userId).in('daily_mission_id', missions.map(m => m.id)).in('status', ['approved', 'pending']);
-  return (count || 0) > 0;
+export async function setDailyMissionOverride(familyId: string, date: string, text: string) {
+  return await supabase.from('daily_missions')
+    .update({ parent_override_text: text })
+    .eq('family_id', familyId)
+    .eq('date', date);
 }
 
-export async function completeMission(userId: string, family_id: string, missionId: string, date: string, isDaily: boolean, proofUrl?: string, proofNote?: string, points?: number, reflectionText?: string, userRole?: string) {
-  // 🛡️ ELITE APPROVAL LOGIC: Parents are auto-approved, children are pending guardian review
+export async function hasCompletedDailyMission(userId: string, missionId: string, date: string): Promise<boolean> {
+  const { data } = await supabase.from('mission_completions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('daily_mission_id', missionId)
+    .eq('date', date)
+    .eq('status', 'approved')
+    .maybeSingle();
+  return !!data;
+}
+
+export async function getMissions(familyId: string): Promise<Mission[]> {
+  const { data } = await supabase.from('missions').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+  return data || [];
+}
+
+export async function addMission(familyId: string, mission: Partial<Mission>) {
+  return await supabase.from('missions').insert({ ...mission, family_id: familyId }).select().single();
+}
+
+export async function updateMission(id: string, mission: Partial<Mission>) {
+  return await supabase.from('missions').update(mission).eq('id', id);
+}
+
+export async function getRewards(familyId: string): Promise<Reward[]> {
+  const { data } = await supabase.from('rewards').select('*').eq('family_id', familyId).order('cost', { ascending: true });
+  return data || [];
+}
+
+export async function getTodayCompletions(familyId: string, date?: string): Promise<MissionCompletion[]> {
+  const d = date || new Date().toISOString().split('T')[0];
+  const { data } = await supabase.from('mission_completions').select('*').eq('family_id', familyId).eq('date', d);
+  return data || [];
+}
+
+export async function getPersonalCompletions(userId: string, familyId: string, date: string): Promise<MissionCompletion[]> {
+  const { data } = await supabase.from('mission_completions')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('family_id', familyId)
+    .eq('date', date);
+  return data || [];
+}
+
+export async function completeMission(
+  userId: string, 
+  family_id: string, 
+  missionId: string, 
+  date: string, 
+  isDaily: boolean = false, 
+  proofUrl?: string, 
+  proofNote?: string, 
+  points?: number,
+  reflectionText?: string,
+  userRole: string = 'child'
+) {
   const status = (userRole === 'parent' || userRole === 'guardian') ? 'approved' : 'pending';
+  // All 3 situational parts (Reflect/Activity, Chat, Call) are independent sub-quests
+  // Each is deduplicated per proof_note per day, NOT by daily_mission_id
+  const isSubQuest = isDaily && (
+    (proofNote || '').includes('Activity') ||
+    (proofNote || '').includes('Chat') ||
+    (proofNote || '').includes('Call')
+  );
 
-  // 🛡️ DUPLICATE DRILL: Ensure we don't submit twice for the same mission today
-  const existingQuery = supabase.from('mission_completions').select('id').eq('user_id', userId).eq('date', date).in('status', ['approved', 'pending']);
-  if (isDaily) existingQuery.eq('daily_mission_id', missionId);
-  else existingQuery.eq('mission_id', missionId);
-  
-  const { data: existing } = await existingQuery.maybeSingle();
-  if (existing) return { data: existing, error: null };
+  if (!isSubQuest) {
+    // Non-situational: standard unique check by mission_id
+    const { data: existing } = await supabase.from('mission_completions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq(isDaily ? 'daily_mission_id' : 'mission_id', missionId)
+      .eq('date', date)
+      .maybeSingle();
+    if (existing) return { data: existing, error: null };
+  } else {
+    // Situational: deduplicate per proof_note type per day
+    const { data: existing } = await supabase.from('mission_completions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('family_id', family_id)
+      .eq('date', date)
+      .eq('proof_note', proofNote || 'Activity')
+      .maybeSingle();
+    if (existing) return { data: existing, error: null };
+  }
 
-  // 🛡️ HYBRID SYNC: Record the log in Supabase, but the SPIRITUAL TRUTH is in the Cloud
+
   const { data, error } = await supabase.from('mission_completions').insert({
     user_id: userId,
     family_id,
-    mission_id: isDaily ? null : missionId,
-    daily_mission_id: isDaily ? missionId : null,
+    mission_id: (isDaily || isSubQuest) ? null : missionId,
+    daily_mission_id: (isDaily && !isSubQuest) ? missionId : null,
     date,
     status,
     proof_url: proofUrl,
-    proof_note: proofNote,
-    points_earned: points || (isDaily ? 100 : 50),
+    proof_note: proofNote || 'Activity',
+    points_earned: points || (isDaily ? 34 : 50),
     reflection_text: reflectionText,
-    submitter_name: userRole === 'parent' ? 'Parent' : 'Child'
+    submitter_name: (userRole === 'parent' || userRole === 'guardian') ? 'Parent' : 'Child'
   }).select().single();
 
-  if (!error && data) {
-    // 🛡️ ECOSYSTEM SYNC: Mirror completion as a Post in the Foundation
-    const activityDesc = isDaily ? `Daily Mission Progress` : `Task Achievement`;
-    const syncText = status === 'approved' ? `✅ **Verified!** ${activityDesc}` : `⏳ **Action Logged!** ${activityDesc}`;
-    
-    await syncPostToFoundation(`${syncText}\n\n*Synced via Musfam Ecosystem Proxy*${reflectionText ? `\n\n📝 "${reflectionText}"` : ''}`, family_id);
-    
-    if (status === 'approved') {
-       if (!isDaily) await syncGoalProgressToFoundation(missionId, 1);
-       await syncActivityToFoundation(activityDesc, data.points_earned);
+  if (error) return { data: null, error };
 
-       // 🛡️ POINT PRECISION: Auto-award points for parents/guardians
-       const { data: current } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', family_id).maybeSingle();
-       await supabase.from('points').update({ 
-         total_points: (current?.total_points || 0) + data.points_earned 
-       }).eq('user_id', userId).eq('family_id', family_id);
-    }
+  if (data && status === 'approved') {
+    const activityDesc = isDaily ? `Daily Mission Progress` : `Task Achievement`;
+    try {
+      if (typeof syncPostToFoundation === 'function') {
+        await syncPostToFoundation(`✅ **Verified!** ${activityDesc}\n\n*Synced via Musfam Ecosystem Proxy*${reflectionText ? `\n\n📝 "${reflectionText}"` : ''}`, family_id);
+      }
+      if (!isDaily && !isSubQuest) await syncGoalProgressToFoundation(missionId, 1);
+      await syncActivityToFoundation(activityDesc, data.points_earned);
+    } catch(e) { console.error('Ecosystem sync failed', e); }
+
+    const { data: current } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', family_id).maybeSingle();
+    await supabase.from('points').update({ total_points: (current?.total_points || 0) + data.points_earned }).eq('user_id', userId).eq('family_id', family_id);
+    
+    // Log Activity Entry
+    await supabase.from('activity_log').insert({
+      family_id,
+      user_id: userId,
+      description: activityDesc,
+      points_change: data.points_earned,
+      icon: isDaily ? 'book-open' : 'check-circle'
+    });
   }
 
-  return { data, error };
+  return { data, error: null };
 }
 
 export async function completeCustomMission(userId: string, familyId: string, missionId: string, date: string, points: number, proofUrl?: string, proofNote?: string) {
   return completeMission(userId, familyId, missionId, date, false, proofUrl, proofNote, points);
 }
 
-export async function uploadProofImage(userId: string, file: File) {
-  // 🛡️ STORAGE SHIFT: Prioritize Supabase for reliability unless Cloudinary is configured
-  const ext = file.name.split('.').pop() || 'jpg';
-  const path = `${userId}/${Date.now()}.${ext}`;
-  
-  try {
-    const { data: uploadData, error } = await supabase.storage.from('proof-images').upload(path, file);
-    if (uploadData) {
-      const { data: { publicUrl } } = supabase.storage.from('proof-images').getPublicUrl(path);
-      return { publicUrl };
-    }
-    
-    // Fallback if Supabase fails (e.g. bucket issues)
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_preset', 'musfam_proofs'); 
-    
-    const res = await fetch(`https://api.cloudinary.com/v1_1/demo/image/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-    
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return { publicUrl: data.secure_url };
-  } catch (err: any) {
-    return { error: err.message || 'Upload failed' };
-  }
-}
+// --- APPROVALS & POINTS ---
 
-// --- MISSION CRUD ---
-export async function getMissions(familyId: string) {
-  const { data } = await supabase.from('missions').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+export async function getPendingApprovals(familyId: string): Promise<PendingApproval[]> {
+  const { data } = await supabase.from('mission_completions')
+    .select('*')
+    .eq('family_id', familyId)
+    .eq('status', 'pending')
+    .order('completed_at', { ascending: false });
   return data || [];
 }
-export async function addMission(familyId: string, mission: Partial<Mission>) {
-  const result = await supabase.from('missions').insert({ ...mission, family_id: familyId }).select().single();
-  
-  if (result.data) {
-    // 🛡️ SYNC: Register personal mission as a Goal in the Foundation
-    await syncGoalToFoundation(result.data.title, 1, 'other');
-    
-    // Announce to family
-    await syncPostToFoundation(`📜 **New Mission!** A parent added: "${result.data.title}"`, familyId);
-  }
-  
-  return result;
-}
-export async function updateMission(id: string, mission: Partial<Mission>) {
-  return supabase.from('missions').update(mission).eq('id', id).select().single();
-}
-export async function deleteMission(id: string) {
-  return supabase.from('missions').delete().eq('id', id);
-}
 
-// --- REWARD CRUD ---
-export async function getRewards(familyId: string) {
-  const { data } = await supabase.from('rewards').select('*').eq('family_id', familyId).order('cost', { ascending: true });
-  return data || [];
-}
-export async function addReward(familyId: string, reward: Partial<Reward>) {
-  return supabase.from('rewards').insert({ ...reward, family_id: familyId }).select().single();
-}
-export async function updateReward(id: string, reward: Partial<Reward>) {
-  return supabase.from('rewards').update(reward).eq('id', id).select().single();
-}
-export async function deleteReward(id: string) {
-  return supabase.from('rewards').delete().eq('id', id);
-}
+export async function approveCompletion(id: string, userId: string, familyId: string, points: number, adminName: string, feedback?: string) {
+  const { error } = await supabase.from('mission_completions')
+    .update({ status: 'approved', guardian_feedback: feedback })
+    .eq('id', id);
+  if (error) return { error };
 
-// --- COMPLETION & APPROVAL ---
-export async function getTodayCompletions(familyId: string) {
-  return (await supabase.from('mission_completions').select('*').eq('family_id', familyId).eq('date', new Date().toISOString().split('T')[0])).data || [];
-}
-export async function getPendingApprovals(familyId: string) {
-  return (await supabase.from('mission_completions').select('*').eq('family_id', familyId).eq('status', 'pending')).data || [];
-}
-export async function getRejectedCompletions(familyId: string) {
-  return (await supabase.from('mission_completions').select('*').eq('family_id', familyId).eq('status', 'rejected')).data || [];
-}
-export async function approveCompletion(id: string, userId: string, familyId: string, points: number, approvedBy: string, feedback?: string) {
-  const { data: comp } = await supabase.from('mission_completions').update({ 
-    status: 'approved', 
-    approved_at: new Date().toISOString(), 
-    approved_by: approvedBy, 
-    parent_feedback: feedback 
-  }).eq('id', id).select().single();
+  const { data: current } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', familyId).maybeSingle();
+  await supabase.from('points').update({ total_points: (current?.total_points || 0) + points }).eq('user_id', userId).eq('family_id', familyId);
 
-  if (comp) {
-    const { data: current } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', familyId).single();
-    await supabase.from('points').update({ total_points: (current?.total_points || 0) + points }).eq('user_id', userId).eq('family_id', familyId);
-    
-    // 🛡️ SYNC: Global Activity Aura
-    await syncActivityToFoundation(`Guardian ${approvedBy} approved completion.`, points);
-    
-    // SYNC: Feedback as a Comment in the Foundation Social Hub
-    // We attempt to find the original Post if possible, or just emit a global celebration
-    await syncCommentToFoundation(comp.id, `✅ **Approved!** "${feedback || 'Excellent work!'}" — ${approvedBy}`);
-  }
+  // Log activity
+  await supabase.from('activity_log').insert({
+    family_id: familyId,
+    user_id: userId,
+    description: `Approved by ${adminName}`,
+    points_change: points,
+    icon: 'star'
+  });
+
+  try { await syncActivityToFoundation(`Parent Approved Activity`, points); } catch {}
 
   return { success: true };
 }
-export async function rejectCompletion(id: string, familyId: string, submitterName: string, rejectedBy: string, feedback?: string) {
-  return supabase.from('mission_completions').update({ status: 'rejected', approved_at: new Date().toISOString(), approved_by: rejectedBy, parent_feedback: feedback }).eq('id', id);
+
+export async function rejectCompletion(id: string, familyId: string, childName: string, adminName: string, feedback?: string) {
+  return await supabase.from('mission_completions').update({ status: 'rejected', guardian_feedback: feedback }).eq('id', id);
 }
 
-// --- STATS ---
-export async function getFamilyPoints(familyId: string) {
+export async function getFamilyPoints(familyId: string): Promise<number> {
   const { data } = await supabase.from('points').select('total_points').eq('family_id', familyId);
   return (data || []).reduce((acc, curr) => acc + (curr.total_points || 0), 0);
 }
-export async function getStreak(userId: string, familyId: string) {
-  return (await supabase.from('streaks').select('*').eq('user_id', userId).eq('family_id', familyId).maybeSingle()).data;
+
+export async function getActivities(familyId: string): Promise<ActivityEntry[]> {
+  const { data } = await supabase.from('activity_log').select('*').eq('family_id', familyId).order('created_at', { ascending: false }).limit(50);
+  return (data || []) as any;
 }
-export async function recordQuranReadPages(familyId: string, pages: number) {
-  const { data: current } = await supabase.from('quran_progress').select('pages_read').eq('family_id', familyId).maybeSingle();
-  return supabase.from('quran_progress').upsert({ family_id: familyId, pages_read: (current?.pages_read || 0) + pages }, { onConflict: 'family_id' });
+
+export async function clearAllActivities(familyId: string) {
+  return await supabase.from('activity_log').delete().eq('family_id', familyId);
 }
+
+export async function claimReward(rewardId: string, userId: string, familyId: string, cost: number) {
+  const { data: p } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', familyId).single();
+  if (!p || p.total_points < cost) return { success: false, error: 'Not enough points' };
+  
+  await supabase.from('points').update({ total_points: p.total_points - cost }).eq('user_id', userId).eq('family_id', familyId);
+  await supabase.from('rewards').update({ claimed: true, claimed_by: userId, claimed_at: new Date().toISOString() }).eq('id', rewardId);
+  
+  // Log activity
+  await supabase.from('activity_log').insert({
+    family_id: familyId,
+    user_id: userId,
+    description: `Claimed Reward`,
+    points_change: -cost,
+    icon: 'gift'
+  });
+
+  return { success: true };
+}
+
+// --- QURAN STATS ---
+
+export async function getQuranReads(familyId: string): Promise<QuranRead[]> {
+  const { data } = await supabase.from('quran_reads').select('*').eq('family_id', familyId).order('read_at', { ascending: false }).limit(20);
+  return (data || []) as any;
+}
+
 export async function recordQuranRead(userId: string, familyId: string, readerName: string, verseKey: string, surahName: string) {
-  return supabase.from('quran_reads').insert({
+  const today = new Date().toISOString().split('T')[0];
+  
+  // 1. Log to quran_reads for the Control Page table
+  await supabase.from('quran_reads').insert({
     user_id: userId,
     family_id: familyId,
     reader_name: readerName,
@@ -243,48 +297,124 @@ export async function recordQuranRead(userId: string, familyId: string, readerNa
     surah_name: surahName,
     read_at: new Date().toISOString()
   });
-}
 
-export async function getActivities(familyId: string) { return (await supabase.from('activities').select('*').eq('family_id', familyId).order('created_at', { ascending: false })).data || []; }
-export async function clearAllActivities(familyId: string) { return supabase.from('activities').delete().eq('family_id', familyId); }
-export async function isMissionCompletedToday(userId: string, missionId: string, date: string) {
-  const { count } = await supabase.from('mission_completions').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('mission_id', missionId).eq('date', date).eq('status', 'approved');
-  return (count || 0) > 0;
-}
-export async function claimReward(rewardId: string, userId: string, familyId: string, cost: number) {
-  const { data: current } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', familyId).single();
-  const currentPoints = current?.total_points || 0;
-  if (currentPoints < cost) return { success: false, error: 'Insufficient points' };
-  
-  const { error: claimError } = await supabase.from('rewards').update({ 
-    claimed: true, 
-    claimed_at: new Date().toISOString(), 
-    claimed_by: userId 
-  }).eq('id', rewardId);
-  
-  if (claimError) return { success: false, error: claimError };
-  
-  await supabase.from('points').update({ 
-    total_points: currentPoints - cost 
-  }).eq('user_id', userId).eq('family_id', familyId);
+  // 2. Log to activity_log for the Shop Page history
+  await supabase.from('activity_log').insert({
+    family_id: familyId,
+    user_id: userId,
+    description: `Read ${surahName} (${verseKey})`,
+    points_change: 1, // Small reward for reading
+    icon: 'book-open'
+  });
 
-  // 🛡️ SHADOW SYNC: Ecosystem Recognition
-  await syncPostToFoundation(`🎁 **Reward Realized!** A family member claimed a reward for ${cost} AP!`, familyId);
-  await syncActivityToFoundation(`Claimed Reward`, -cost);
-  
+  // 3. Update points slightly (micro-reward)
+  const { data: current } = await supabase.from('points').select('total_points').eq('user_id', userId).eq('family_id', familyId).maybeSingle();
+  await supabase.from('points').update({ total_points: (current?.total_points || 0) + 1 }).eq('user_id', userId).eq('family_id', familyId);
+
   return { success: true };
 }
-export async function addReflection(familyId: string, data: any) {
-  return supabase.from('reflections').insert({ ...data, family_id: familyId });
-}
-export async function setDailyMissionOverride(familyId: string, date: string, text: string) {
-  return supabase.from('daily_missions').upsert({ family_id: familyId, date, generated_text: text }, { onConflict: 'family_id, date' });
-}
-export async function getQuranReads(familyId: string) {
-  const { data } = await supabase.from('quran_progress').select('*').eq('family_id', familyId);
-  return data || [];
-}
-export async function deleteActivity(id: string) {
-  return supabase.from('activities').delete().eq('id', id);
+
+export async function getStreak(userId: string, familyId: string): Promise<{ current_streak: number; longest_streak: number }> {
+  // Simple streak logic: check consecutive days in mission_completions
+  const { data } = await supabase.from('mission_completions')
+    .select('date')
+    .eq('user_id', userId)
+    .eq('family_id', familyId)
+    .eq('status', 'approved')
+    .order('date', { ascending: false });
+  
+  if (!data || data.length === 0) return { current_streak: 0, longest_streak: 0 };
+  
+  const dates = [...new Set(data.map(d => d.date))];
+  let current = 0;
+  let longest = 0;
+  let temp = 0;
+  
+  const today = new Date().toISOString().split('T')[0];
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yestStr = yesterday.toISOString().split('T')[0];
+  
+  if (dates[0] === today || dates[0] === yestStr) {
+    let checkDate = new Date(dates[0]);
+    for (let i = 0; i < dates.length; i++) {
+      if (dates[i] === checkDate.toISOString().split('T')[0]) {
+        current++;
+        checkDate.setDate(checkDate.getDate() - 1);
+      } else break;
+    }
+  }
+  
+  // Calculate longest
+  for (let i = 0; i < dates.length; i++) {
+    if (i === 0) { temp = 1; }
+    else {
+      const d1 = new Date(dates[i-1]);
+      const d2 = new Date(dates[i]);
+      d1.setDate(d1.getDate() - 1);
+      if (d1.toISOString().split('T')[0] === d2.toISOString().split('T')[0]) {
+        temp++;
+      } else {
+        longest = Math.max(longest, temp);
+        temp = 1;
+      }
+    }
+  }
+  longest = Math.max(longest, temp);
+  
+  return { current_streak: current, longest_streak: longest };
 }
 
+export async function addReward(familyId: string, reward: Partial<Reward>) {
+  return await supabase.from('rewards').insert({ ...reward, family_id: familyId }).select().single();
+}
+
+export async function updateReward(id: string, reward: Partial<Reward>) {
+  return await supabase.from('rewards').update(reward).eq('id', id);
+}
+
+export async function isMissionCompletedToday(userId: string, missionId: string, date: string): Promise<boolean> {
+  const { data } = await supabase.from('mission_completions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('mission_id', missionId)
+    .eq('date', date)
+    .in('status', ['approved', 'pending'])
+    .maybeSingle();
+  return !!data;
+}
+
+export async function getRejectedCompletions(familyId: string): Promise<MissionCompletion[]> {
+  const { data } = await supabase.from('mission_completions')
+    .select('*')
+    .eq('family_id', familyId)
+    .eq('status', 'rejected');
+  return data || [];
+}
+
+export async function deleteActivity(id: string) {
+  return await supabase.from('activity_log').delete().eq('id', id);
+}
+
+export async function addReflection(familyId: string, reflection: any) {
+  return await supabase.from('reflections').insert({ ...reflection, family_id: familyId });
+}
+
+// --- UTILS ---
+
+export async function uploadProofImage(userId: string, file: File): Promise<{ publicUrl: string | null; error: any }> {
+  const ext = file.name.split('.').pop() || 'jpg';
+  const path = `${userId}/${Date.now()}.${ext}`;
+  const { data, error } = await supabase.storage.from('proof-images').upload(path, file);
+  if (error) return { publicUrl: null, error };
+  const { data: q } = supabase.storage.from('proof-images').getPublicUrl(path);
+  return { publicUrl: q.publicUrl, error: null };
+}
+
+export async function deleteMission(id: string) {
+  return await supabase.from('missions').delete().eq('id', id);
+}
+
+export async function deleteReward(id: string) {
+  return await supabase.from('rewards').delete().eq('id', id);
+}

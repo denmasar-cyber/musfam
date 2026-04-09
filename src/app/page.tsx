@@ -13,11 +13,11 @@ import {
   getMissions, getRewards, getTodayCompletions,
   completeMission, completeCustomMission, uploadProofImage,
   getPendingApprovals, approveCompletion, rejectCompletion,
-  getFamilyPoints
+  getFamilyPoints, getPersonalCompletions
 } from '@/lib/store';
 import { getAppDate, getDailyVerseKey } from '@/lib/quran-api';
-import { Mission, Reward, DailyMission, Profile, PendingApproval } from '@/lib/types';
-import { BookOpen, CheckCircle, Diamond, ArrowUpRight, ImageIcon, ChevronRight, Star, Loader2, Play, Pause, Volume2, Trophy, Gift, Check, Clock, AlertCircle, XCircle, ThumbsUp, ThumbsDown, Plus, Trash2 } from 'lucide-react';
+import { Mission, Reward, DailyMission, Profile, PendingApproval, MissionCompletion } from '@/lib/types';
+import { BookOpen, CheckCircle, Diamond, ArrowUpRight, ImageIcon, ChevronRight, Star, Loader2, Play, Pause, Volume2, Trophy, Gift, Check, Clock, AlertCircle, XCircle, ThumbsUp, ThumbsDown, Plus, Trash2, Users, MessageSquare } from 'lucide-react';
 import LoadingBlock from '@/components/LoadingBlock';
 import Link from 'next/link';
 
@@ -27,6 +27,14 @@ const LUCIDE_ICON_EMOJI: { [key: string]: string } = {
   'check-circle': '✅', 'gift': '🎁', 'sun': '☀️', 'alert-circle': '⚠️',
   'star': '⭐', 'heart': '❤️', 'moon': '🌙', 'book': '📚', 'pray': '🤲',
 };
+
+// Mock rivals for the Global Aura Board (Projecting the global community)
+const rivalFamilies = [
+  { family_id: 'rival_1', family_name: 'The Al-Farsi Clan', total_points: 4520, rank: 1 },
+  { family_id: 'rival_2', family_name: 'The Mansour Family', total_points: 3840, rank: 2 },
+  { family_id: 'rival_3', family_name: 'The Khalid Dynasty', total_points: 3120, rank: 3 },
+  { family_id: 'rival_4', family_name: 'The Nur Family', total_points: 2950, rank: 4 }
+];
 
 // Resolve icon field -> either a data URL, an emoji string, or null (use category dot)
 function resolveIcon(icon: string | undefined | null): { type: 'image'; src: string } | { type: 'emoji'; char: string } | { type: 'dot' } {
@@ -81,8 +89,8 @@ const SURAH_NAMES_HOME: any /* Record<number, string> */ = {
 function fmtVerseRef(key: string) {
   if (!key) return '';
   const [ch, ay] = key.split(':');
-  const name = SURAH_NAMES_HOME[parseInt(ch)] || 'Surah ' + ch;
-  return `${name} ${ch}:${ay}`;
+  const name = SURAH_NAMES_HOME[parseInt(ch)];
+  return name ? `${name} ${ch}:${ay}` : `Surah ${ch}:${ay}`;
 }
 
 
@@ -145,11 +153,12 @@ export default function HomePage() {
   const [verseOfDay, setVerseOfDay] = useState<VerseOfDay | null>(null);
   const [verseLoading, setVerseLoading] = useState(true);
   const [dailyMission, setDailyMission] = useState<DailyMission | null>(null);
-  const [missionCompleted, setMissionCompleted] = useState(false);
+  const [personalCompletions, setPersonalCompletions] = useState<MissionCompletion[]>([]);
   const [showReflectionModal, setShowReflectionModal] = useState(false);
   const [reflectingCustomMission, setReflectingCustomMission] = useState<Mission | null>(null);
   const [reflectionText, setReflectionText] = useState('');
-  const [proofNote, setProofNote] = useState('');
+  const [proofNote, setProofNote] = useState(''); // 'Activity' | 'Video Call' | 'Chat'
+  const [customChipLabel, setCustomChipLabel] = useState(''); // user-editable label
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [uploadingProof, setUploadingProof] = useState(false);
   const [missionError, setMissionError] = useState('');
@@ -211,6 +220,21 @@ export default function HomePage() {
   const [parentFeedback, setParentFeedback] = useState('');
   const reflectionContentRef = useRef<HTMLDivElement>(null);
 
+  // 🛡️ NAVIGATION SYNC: Auto-open modal for situational claims (Chat/Call/Activity)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && dailyMission) {
+      const params = new URLSearchParams(window.location.search);
+      const action = params.get('action');
+      const tab = params.get('tab');
+      if (tab) setDashTab(tab as any);
+      if (action === 'chat') { setProofNote('Chat'); setShowReflectionModal(true); }
+      if (action === 'call') { setProofNote('Video Call'); setShowReflectionModal(true); }
+      if (action === 'activity') { setProofNote('Activity'); setShowReflectionModal(true); }
+      // Clean URL after handling
+      window.history.replaceState({}, '', window.location.pathname + (tab ? `?tab=${tab}` : ''));
+    }
+  }, [dailyMission]);
+
   // Sync audio progress
   useEffect(() => {
     if (!audioRef) return;
@@ -230,6 +254,7 @@ export default function HomePage() {
     setShowReflectionModal(false);
     setReflectingCustomMission(null);
     setMissionError('');
+    setCustomChipLabel('');
   }, []);
   const reflectionSwipe = useSwipeDown(closeReflectionModal, 80, () => (reflectionContentRef.current?.scrollTop ?? 0) === 0);
 
@@ -483,7 +508,9 @@ export default function HomePage() {
     getDailyMission(family.id, todayStr, vKey, verseOfDay.translation, family.name).then(dm => {
       if (dm) {
         setDailyMission(dm);
-        hasCompletedDailyMission(user.id, family.id, todayStr).then(setMissionCompleted);
+        import('@/lib/store').then(({ getPersonalCompletions }) => 
+          getPersonalCompletions(user.id, family.id, todayStr).then(setPersonalCompletions)
+        );
       }
     });
   }, [family, user, todayStr, verseOfDay]);
@@ -538,7 +565,12 @@ export default function HomePage() {
 
     const channel = supabase
       .channel(`mission_completions_${family.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'mission_completions' }, () => { loadStats(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'mission_completions' }, () => { 
+        loadStats(); 
+        import('@/lib/store').then(({ getPersonalCompletions }) => 
+          getPersonalCompletions(user.id, family.id, todayStr).then(setPersonalCompletions)
+        );
+      })
       .subscribe();
 
     const missionsChannel = supabase
@@ -610,15 +642,24 @@ export default function HomePage() {
         else if (res.error) throw res.error;
       }
       
-      const { data: result } = await completeMission(user.id, family.id, dailyMission.id, todayStr, true, finalProofUrl, proofNote, 100, reflectionText, profile.role);
+      let finalNote = proofNote || 'Activity';
+      if (customChipLabel.trim()) {
+        finalNote = `${proofNote}: ${customChipLabel.trim()}`;
+      }
       
-      if (result) {
-        setMissionCompleted(true);
+      const { data: result, error } = await completeMission(user.id, family.id, dailyMission.id, todayStr, true, finalProofUrl, finalNote, 34, reflectionText, profile.role);
+      
+      if (result || !error) {
+        import('@/lib/store').then(({ getPersonalCompletions }) => 
+          getPersonalCompletions(user.id, family.id, todayStr).then(setPersonalCompletions)
+        );
         setShowReflectionModal(false);
         setReflectionText('');
         setProofNote('');
+        setCustomChipLabel('');
         setProofFile(null);
       } else {
+        console.error('Mission Insert Error:', error);
         setMissionError('Submission failed. Please try again.');
       }
     } catch (err) {
@@ -916,33 +957,169 @@ export default function HomePage() {
                   <div className="bg-white px-4 py-4 h-12" />
                 </div>
               ) : (
-                <div className={`rounded-2xl overflow-hidden border border-black/[0.06] shadow-md transition-all duration-700 ${!missionCompleted ? 'ring-2 ring-[#c8a84b]/20 shadow-[0_0_20px_rgba(200,168,75,0.1)]' : ''}`}>
+                <div className={`rounded-2xl overflow-hidden border border-black/[0.06] shadow-md transition-all duration-700 ${personalCompletions.length < 3 ? 'ring-2 ring-[#c8a84b]/20' : 'ring-2 ring-green-200'}`}>
+                  {/* Header */}
                   <div className="px-4 py-3 batik-overlay relative" style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #3d4e18 100%)' }}>
-                    {!missionCompleted && (
-                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer pointer-events-none" />
-                    )}
                     <p className="text-white/60 text-[10px] font-bold uppercase tracking-widest mb-1">
-                      Daily · {fmtVerseRef(dailyMission.verse_key)}
+                      Daily Goal · {fmtVerseRef(dailyMission.verse_key)}
                     </p>
                     <p className="text-white font-semibold text-sm leading-snug">
                       {dailyMission.parent_override_text || dailyMission.generated_text}
                     </p>
                   </div>
-                  <div className="bg-white px-4 py-3">
-                    {missionCompleted ? (
-                      <div className="flex items-center gap-2 py-1">
-                        <CheckCircle size={15} className="text-green-600" />
-                        <p className="text-sm font-bold text-green-700">Completed! Alhamdulillah 🌟</p>
-                      </div>
-                    ) : (
-                      <button type="button" onClick={() => setShowReflectionModal(true)}
-                        className="w-full py-2.5 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 active:scale-[0.97] transition-all shadow-md"
-                        style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #d4a017 100%)' }}>
-                        <CheckCircle size={14} /> Complete + Reflect
-                      </button>
-                    )}
+
+                  {/* Per-Part Situational Progress */}
+                  <div className="bg-white p-3 space-y-2">
+                    {(() => {
+                      const getChipData = (noteMatch: string) => {
+                        const match = personalCompletions.find(c => {
+                          const n = c.proof_note || '';
+                          if (noteMatch === 'Activity') return n === 'Activity' || n.startsWith('Activity:');
+                          return n.startsWith(noteMatch);
+                        });
+                        return match;
+                      };
+
+                      const activityMatch = getChipData('Activity');
+                      const callMatch = getChipData('Video Call');
+                      const chatMatch = getChipData('Chat');
+
+                      const formatLabel = (match: any, fallback: string) => {
+                        if (!match || !match.proof_note) return fallback;
+                        const parts = match.proof_note.split(': ');
+                        return parts.length > 1 ? parts.slice(1).join(': ') : fallback;
+                      };
+
+                      const chips = [
+                        {
+                          key: 'reflect',
+                          label: formatLabel(activityMatch, 'Reflection'),
+                          sublabel: 'Write a spiritual note',
+                          note: 'Activity',
+                          icon: BookOpen,
+                          status: activityMatch ? (activityMatch.status || 'pending') : 'idle',
+                        },
+                        {
+                          key: 'call',
+                          label: formatLabel(callMatch, 'Family Call'),
+                          sublabel: 'Connect via Video Call',
+                          note: 'Video Call',
+                          icon: Users,
+                          status: callMatch ? (callMatch.status || 'pending') : 'idle',
+                        },
+                        {
+                          key: 'chat',
+                          label: formatLabel(chatMatch, 'Family Chat'),
+                          sublabel: 'Share in Family Chat',
+                          note: 'Chat',
+                          icon: MessageSquare,
+                          status: chatMatch ? (chatMatch.status || 'pending') : 'idle',
+                        },
+                      ];
+
+                      const allDone = chips.every(c => c.status === 'approved');
+                      const anyDone = chips.some(c => c.status !== 'idle');
+
+                      return (
+                        <div className="space-y-2">
+                          {chips.map((chip) => {
+                            const isIdle = chip.status === 'idle';
+                            const isPending = chip.status === 'pending';
+                            const isApproved = chip.status === 'approved';
+                            const isRejected = chip.status === 'rejected';
+
+                            return (
+                              <button
+                                key={chip.key}
+                                type="button"
+                                disabled={isApproved || isPending}
+                                onClick={() => {
+                                  if (isIdle || isRejected) {
+                                    setProofNote(chip.note);
+                                    setShowReflectionModal(true);
+                                  }
+                                }}
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all active:scale-[0.98] text-left ${
+                                  isApproved
+                                    ? 'bg-green-50 border-green-200'
+                                    : isPending
+                                    ? 'bg-amber-50 border-amber-200'
+                                    : isRejected
+                                    ? 'bg-red-50 border-red-200 cursor-pointer'
+                                    : 'bg-gray-50 border-gray-100 cursor-pointer hover:bg-[#f5f5e8] hover:border-[#2d3a10]/20'
+                                }`}
+                              >
+                                {/* Icon */}
+                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                                  isApproved ? 'bg-green-500' : isPending ? 'bg-amber-400' : isRejected ? 'bg-red-400' : 'bg-[#2d3a10]/10'
+                                }`}>
+                                  <chip.icon size={14} className={isApproved || isPending || isRejected ? 'text-white' : 'text-[#2d3a10]/60'} />
+                                </div>
+
+                                {/* Label */}
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-xs font-extrabold leading-none mb-0.5 ${
+                                    isApproved ? 'text-green-700' : isPending ? 'text-amber-700' : isRejected ? 'text-red-600' : 'text-[#2d3a10]'
+                                  }`}>{chip.label}</p>
+                                  <p className="text-[10px] text-gray-400 font-medium">
+                                    {isApproved ? 'Approved ✓' : isPending ? 'Pending review...' : isRejected ? 'Tap to resubmit' : chip.sublabel}
+                                  </p>
+                                </div>
+
+                                {/* Status Badge */}
+                                <div className="flex-shrink-0">
+                                  {isApproved && (
+                                    <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
+                                      <Check size={12} className="text-white" />
+                                    </div>
+                                  )}
+                                  {isPending && (
+                                    <div className="w-6 h-6 rounded-full bg-amber-400 flex items-center justify-center">
+                                      <Clock size={11} className="text-white" />
+                                    </div>
+                                  )}
+                                  {isRejected && (
+                                    <div className="w-6 h-6 rounded-full bg-red-400 flex items-center justify-center">
+                                      <XCircle size={12} className="text-white" />
+                                    </div>
+                                  )}
+                                  {isIdle && (
+                                    <div className="w-6 h-6 rounded-full bg-[#2d3a10]/10 flex items-center justify-center">
+                                      <ChevronRight size={12} className="text-[#2d3a10]/40" />
+                                    </div>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+
+                          {/* Bottom State */}
+                          {allDone ? (
+                            <div className="bg-green-500 rounded-xl py-2.5 flex items-center justify-center gap-2 shadow-md shadow-green-500/20 mt-1">
+                              <CheckCircle size={15} className="text-white" />
+                              <span className="text-white font-extrabold text-xs uppercase tracking-wider">All Goals Completed!</span>
+                            </div>
+                          ) : anyDone ? (
+                            <div className="flex items-center justify-between px-1 pt-1">
+                              <p className="text-[10px] text-gray-400 font-medium">
+                                {chips.filter(c => c.status !== 'idle' && c.status !== 'rejected').length}/3 goals submitted
+                              </p>
+                              <p className="text-[10px] font-bold text-[#c8a84b]">Keep going →</p>
+                            </div>
+                          ) : (
+                            <button type="button"
+                              onClick={() => { setProofNote('Activity'); setShowReflectionModal(true); }}
+                              className="w-full py-3 rounded-xl text-white font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md"
+                              style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #d4a017 100%)' }}>
+                              <CheckCircle size={14} /> Begin Today's Mission
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
+
               )}
 
               {/* ΓöÇ Parent: Pending Approvals Banner ΓöÇ */}
@@ -963,7 +1140,11 @@ export default function HomePage() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-gray-800 truncate">
-                              {ap.daily_mission_id ? '🌅 Daily Mission Progress' : (mission?.title || 'Family Mission')}
+                              {ap.proof_note && ap.proof_note !== 'Activity' 
+                                ? `🌟 Claiming ${ap.proof_note} Progress`
+                                : ap.daily_mission_id 
+                                  ? '🌅 Daily Mission Reflection' 
+                                  : (mission?.title || 'Family Mission')}
                             </p>
                             <div className="mt-1.5 space-y-1.5">
                               {(() => {
@@ -1384,83 +1565,132 @@ export default function HomePage() {
 
       </main>
 
-      {/* --- Reflection / Mission Complete Modal --- */}
-      {showReflectionModal && (
-        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-end justify-center">
-          <div
-            ref={ref => { if (reflectionSwipe.sheetRef) reflectionSwipe.sheetRef.current = ref; }}
-            onTouchStart={reflectionSwipe.handleTouchStart}
-            onTouchMove={reflectionSwipe.handleTouchMove}
-            onTouchEnd={reflectionSwipe.handleTouchEnd}
-            className="bg-white rounded-t-3xl w-full max-w-md flex flex-col"
-            style={{ maxHeight: '88vh' }}
-          >
-            <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
-              <div className="w-10 h-1 bg-gray-200 rounded-full" />
-            </div>
-            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-shrink-0">
-              <h3 className="text-base font-extrabold text-gray-800">Complete Mission</h3>
-              <button type="button" onClick={closeReflectionModal}
-                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                <span className="text-gray-500 text-sm">✕</span>
-              </button>
-            </div>
+      {/* --- Reflection / Daily Mission Complete Modal --- */}
+      {showReflectionModal && (() => {
+        // Determine which situational part triggered this modal
+        const chipLabel =
+          proofNote === 'Activity' ? 'Reflection'
+          : proofNote === 'Video Call' ? 'Family Call'
+          : proofNote === 'Chat' ? 'Family Chat'
+          : 'Reflection';
+        const chipIcon =
+          proofNote === 'Video Call' ? '📹'
+          : proofNote === 'Chat' ? '💬'
+          : '✍️';
+        const chipHint =
+          proofNote === 'Video Call' ? 'Describe what your family discussed on the call.'
+          : proofNote === 'Chat' ? 'Share what you wrote or shared in the family chat.'
+          : 'Write a personal reflection on today\'s verse or mission.';
 
-            <div ref={reflectionContentRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              {missionError && (
-                <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-xl p-3">{missionError}</div>
-              )}
-              <div>
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1.5">Mission</p>
-                <p className="text-sm text-gray-700 bg-gray-50 rounded-xl px-4 py-3 leading-relaxed">
-                  {dailyMission?.parent_override_text || dailyMission?.generated_text}
-                </p>
+        return (
+          <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-end justify-center">
+            <div
+              ref={ref => { if (reflectionSwipe.sheetRef) reflectionSwipe.sheetRef.current = ref; }}
+              onTouchStart={reflectionSwipe.handleTouchStart}
+              onTouchMove={reflectionSwipe.handleTouchMove}
+              onTouchEnd={reflectionSwipe.handleTouchEnd}
+              className="bg-white rounded-t-3xl w-full max-w-md flex flex-col"
+              style={{ maxHeight: '88vh' }}
+            >
+              <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
+                <div className="w-10 h-1 bg-gray-200 rounded-full" />
               </div>
-              <div>
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1.5">
-                  Your Reflection <span className="font-normal normal-case text-gray-300">(min. 10 chars)</span>
-                </p>
-                <textarea
-                  value={reflectionText}
-                  onChange={e => setReflectionText(e.target.value)}
-                  placeholder="Share your reflection..."
-                  rows={4}
-                  className="w-full rounded-2xl border border-gray-200 p-4 text-sm focus:ring-2 focus:ring-[#2d3a10]/20 focus:border-[#2d3a10] outline-none resize-none"
-                />
+
+              {/* Dynamic Header */}
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xl">{chipIcon}</span>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-gray-800 leading-none">{chipLabel}</h3>
+                    <p className="text-[10px] text-gray-400 font-medium mt-0.5">Daily Mission · Situational
+                    </p>
+                  </div>
+                </div>
+                <button type="button" onClick={closeReflectionModal}
+                  className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                  <span className="text-gray-500 text-sm">✕</span>
+                </button>
               </div>
-              <div>
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1.5">Proof (Optional)</p>
-                <div className="flex gap-2">
+
+              <div ref={reflectionContentRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+                {missionError && (
+                  <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-xl p-3">{missionError}</div>
+                )}
+
+                {/* Goal context */}
+                <div className="bg-[#f5f5e8] rounded-2xl px-4 py-3 border border-[#2d3a10]/10">
+                  <p className="text-[9px] font-bold text-[#2d3a10]/50 uppercase tracking-widest mb-1">Today's Goal</p>
+                  <p className="text-xs text-[#2d3a10] font-semibold leading-relaxed">
+                    {dailyMission?.parent_override_text || dailyMission?.generated_text}
+                  </p>
+                </div>
+
+                {/* Situational hint */}
+                <div className="flex items-start gap-2.5 bg-blue-50 rounded-xl px-3 py-2.5 border border-blue-100">
+                  <span className="text-base mt-0.5">{chipIcon}</span>
+                  <p className="text-[11px] text-blue-700 font-medium leading-relaxed">{chipHint}</p>
+                </div>
+
+                {/* Custom Title Input */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-1.5">
+                    Custom Title <span className="font-normal normal-case text-gray-300">(Optional)</span>
+                  </p>
                   <input
-                    type="text"
-                    value={proofNote}
-                    onChange={e => setProofNote(e.target.value)}
-                    placeholder="URL or description..."
-                    className="flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none"
+                    value={customChipLabel}
+                    onChange={e => setCustomChipLabel(e.target.value)}
+                    placeholder={`e.g. ${chipLabel}`}
+                    className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:ring-2 focus:ring-[#2d3a10]/20 focus:border-[#2d3a10] outline-none"
                   />
-                  <label className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors flex-shrink-0">
-                    {uploadingProof ? <Loader2 size={16} className="animate-spin text-gray-400" /> : <ImageIcon size={16} className="text-gray-400" />}
-                    <input type="file" accept="image/*" className="sr-only" onChange={e => setProofFile(e.target.files?.[0] || null)} />
+                </div>
+
+                {/* Reflection textarea */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-1.5">
+                    Your Notes <span className="font-normal normal-case text-gray-300">(min. 10 chars)</span>
+                  </p>
+                  <textarea
+                    value={reflectionText}
+                    onChange={e => setReflectionText(e.target.value)}
+                    placeholder={chipHint}
+                    rows={4}
+                    className="w-full rounded-2xl border border-gray-200 p-4 text-sm focus:ring-2 focus:ring-[#2d3a10]/20 focus:border-[#2d3a10] outline-none resize-none"
+                  />
+                </div>
+
+                {/* Optional proof image */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-1.5">Photo Evidence (Optional)</p>
+                  <label className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-gray-200 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors">
+                    {uploadingProof
+                      ? <Loader2 size={15} className="animate-spin text-gray-400" />
+                      : <ImageIcon size={15} className="text-gray-400" />}
+                    <span className="text-xs text-gray-400 font-medium">
+                      {proofFile ? proofFile.name : 'Tap to attach a photo...'}
+                    </span>
+                    <input type="file" accept="image/*" className="sr-only"
+                      onChange={e => setProofFile(e.target.files?.[0] || null)} />
                   </label>
                 </div>
-                {proofFile && <p className="text-[10px] text-gray-400 mt-1">· {proofFile.name}</p>}
+              </div>
+
+              <div className="px-5 pb-8 pt-3 flex-shrink-0 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={handleCompleteMission}
+                  disabled={submittingMission || reflectionText.trim().length < 10}
+                  className="w-full py-4 rounded-2xl text-white font-bold text-sm disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg"
+                  style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #5a6b28 100%)' }}
+                >
+                  {submittingMission
+                    ? <Loader2 size={18} className="animate-spin" />
+                    : <><CheckCircle size={16} /> Submit {chipLabel} · +100 AP 🌟</>}
+                </button>
               </div>
             </div>
-
-            <div className="px-5 pb-8 pt-3 flex-shrink-0 border-t border-gray-100">
-              <button
-                type="button"
-                onClick={handleCompleteMission}
-                disabled={submittingMission || reflectionText.trim().length < 10}
-                className="w-full py-4 rounded-2xl text-white font-bold text-sm disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg"
-                style={{ background: 'linear-gradient(135deg, #2d3a10 0%, #5a6b28 100%)' }}
-              >
-                {submittingMission ? <Loader2 size={18} className="animate-spin" /> : <>Submit · +100 AP 🌟</>}
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* --- Custom Mission Reflection Modal --- */}
       {reflectingCustomMission && (

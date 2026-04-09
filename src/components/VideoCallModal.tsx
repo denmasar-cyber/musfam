@@ -52,91 +52,7 @@ const RTC_CONFIG: RTCConfiguration = {
 
 
 
-// ── Quran search — mirrors quran/page.tsx search logic ──────────────────────
-interface QuranSearchResult {
-  verse_key: string;
-  text: string;
-  translations: { text: string }[];
-}
-interface QuranSurahMatch {
-  num: number;
-  name: string;
-  total: number;
-}
-// A loaded verse (or full surah list)
-interface LoadedVerse { key: string; arabic: string; translation: string }
-
-function useQuranSearch() {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<QuranSearchResult[]>([]);
-  const [surahMatch, setSurahMatch] = useState<QuranSurahMatch | null>(null);
-  const [ayahInput, setAyahInput] = useState('');
-  const [searching, setSearching] = useState(false);
-  const [verseLoading, setVerseLoading] = useState(false);
-  // Can be one verse or a whole surah list
-  const [verses, setVerses] = useState<LoadedVerse[]>([]);
-
-  const search = useCallback(async (q: string) => {
-    if (!q.trim()) return;
-    setSearching(true);
-    setResults([]);
-    setSurahMatch(null);
-    setAyahInput('');
-    setVerses([]);
-    try {
-      const res = await fetch(`/api/quran/search?q=${encodeURIComponent(q)}`);
-      if (res.ok) {
-        const d = await res.json();
-        if (d.search?.surah) {
-          setSurahMatch({ num: d.search.surah, name: q, total: d.search.total });
-        } else {
-          setResults(d.search?.results || []);
-        }
-      }
-    } catch { /* silent */ }
-    setSearching(false);
-  }, []);
-
-  // Load a surah's verses from the given start ayah.
-  // Always loads the full chapter so we can display from ayahFrom onwards.
-  const loadSurahVerses = useCallback(async (surahNum: number, fromAyah = 1) => {
-    setVerseLoading(true);
-    setVerses([]);
-    try {
-      const res = await fetch(`/api/quran/verses?chapter=${surahNum}&per_page=300`);
-      if (res.ok) {
-        const d = await res.json();
-        const all: Array<{ verse_key: string; text_uthmani?: string; translation?: string }> = d.verses || [];
-        const mapped = all
-          .filter(v => {
-            const [, a] = v.verse_key.split(':');
-            return parseInt(a, 10) >= fromAyah;
-          })
-          .map(v => ({ key: v.verse_key, arabic: v.text_uthmani || '', translation: v.translation || '' }));
-        setVerses(mapped);
-      }
-    } catch { /* silent */ }
-    setVerseLoading(false);
-  }, []);
-
-  const reset = useCallback(() => {
-    setVerses([]);
-    setSurahMatch(null);
-    setResults([]);
-    setQuery('');
-    setAyahInput('');
-  }, []);
-
-  return {
-    query, setQuery,
-    results,
-    surahMatch, setSurahMatch,
-    ayahInput, setAyahInput,
-    searching, verseLoading,
-    verses, setVerses,
-    search, loadSurahVerses, reset,
-  };
-}
+import { useQuranSearch } from '@/hooks/useQuranSearch';
 
 export default function VideoCallModal({
   channelName,
@@ -272,9 +188,9 @@ export default function VideoCallModal({
 
     if (initiator) {
       pc.createOffer().then(offer => {
-        pc.setLocalDescription(offer);
+        pc.setLocalDescription(offer).catch(console.error);
         sendSignal(remoteUid, 'offer', offer);
-      });
+      }).catch(console.error);
     }
     return pc;
   }, [sendSignal]);
@@ -384,7 +300,7 @@ export default function VideoCallModal({
       const ch = supabase.channel(sigChannel, { config: { broadcast: { self: false } } });
       channelRef.current = ch;
       ch.on('broadcast', { event: 'signal' }, ({ payload }) => {
-        handleSignalRef.current?.(payload as { from: string; to: string; type: string; payload: unknown; name: string });
+        handleSignalRef.current?.(payload as { from: string; to: string; type: string; payload: unknown; name: string })?.catch(console.error);
       });
       ch.subscribe((status) => {
         if (status === 'SUBSCRIBED' && !cancelled) {
@@ -454,23 +370,10 @@ export default function VideoCallModal({
 
   const currentFamilyId = familyId || (channelName.length > 20 ? channelName : null);
 
-  const handleCompleteGoal = useCallback(async () => {
-    if (!dailyGoal || !userId || !currentFamilyId || completingGoal) return;
-    setCompletingGoal(true);
-    const todayStr = new Date().toISOString().split('T')[0];
-    try {
-      const { completeMission } = await import('@/lib/store');
-      const { data } = await completeMission(userId, currentFamilyId, dailyGoal.id, todayStr, true, undefined, 'Completed during family call', 100, 'We accomplished this together as a family during our video session! 🤲', userRole || 'parent');
-      if (data) {
-        setGoalProgress(100);
-        sendEmoji('⭐');
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setCompletingGoal(false);
-    }
-  }, [dailyGoal, userId, currentFamilyId, completingGoal, userRole, sendEmoji]);
+  const handleCompleteGoal = useCallback(() => {
+    // 🛡️ MANUAL PROGRESS: Removed automation. Link to situational claim.
+    window.location.href = '/?tab=missions&action=call';
+  }, []);
 
   const handleEnd = () => {
     if (timerRef.current) clearInterval(timerRef.current);
