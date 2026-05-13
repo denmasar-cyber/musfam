@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-git --use-npm)",
+      "Bash(npx create-next-app@latest musfam-app --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-git --use-npm)",
+      "Bash(npx --yes create-next-app@latest musfam-app --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-git --use-npm --no-turbopack)",
+      "Bash(printf \"n\\\\nn\\\\n\")",
+      "Bash(yes \"n\")",
+      "Bash(cp -r musfam-app/* .)",
+      "Bash(cp musfam-app/.eslintrc* musfam-app/.gitignore musfam-app/tsconfig.json musfam-app/next.config.ts musfam-app/postcss.config.mjs musfam-app/next-env.d.ts .)",
+      "Bash(rm -rf musfam-app temp.json)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(cp tsconfig.json next.config.ts next-env.d.ts postcss.config.mjs eslint.config.mjs musfam-app/)",
+      "Bash(cp package.json package-lock.json musfam-app/)",
+      "Bash(cp -r public musfam-app/)",
+      "Bash(npx tsc:*)",
+      "Bash(node -e \":*)",
+      "Bash(npx supabase:*)",
+      "Bash(npm list:*)",
+      "Bash(nslookup oxvbilbqperxtyhvrxor.supabase.co)",
+      "Bash(nslookup db.oxvbilbqperxtyhvrxor.supabase.co)",
+      "Bash(node --dns-result-order=verbatim -e \":*)",
+      "Bash(NODE_TLS_REJECT_UNAUTHORIZED=0 node -e \":*)",
+      "Bash(curl -s \"https://api.quran.com/api/v4/verses/by_chapter/1?language=en&words=false&page=1&per_page=7&translations=131&fields=verse_key,verse_number\")"
+    ]
+  }
+}

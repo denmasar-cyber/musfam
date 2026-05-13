@@ -1,0 +1,54 @@
+﻿
+> musfam-app@0.1.0 build
+> next build
+
+Γû▓ Next.js 16.2.1 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+Γ£ô Compiled successfully in 7.9s
+  Running TypeScript ...
+node.exe : Failed to type 
+check.
+At line:1 char:1
++ & "C:\Program Files\node
+js/node.exe" "C:\Program F
+iles\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo        
+      : NotSpecified: (F  
+  ailed to type check.:   
+ String) [], RemoteExc    
+eption
+    + FullyQualifiedError 
+   Id : NativeCommandErr  
+  or
+ 
+
+./src/app/page.tsx:596:118
+Type error: Argument of ty
+pe 'number | undefined' is
+ not assignable to paramet
+er of type 'number'.
+  Type 'undefined' is not 
+assignable to type 'number
+'.
+
+  [90m594 |[0m ...
+  [90m595 |[0m ...
+[31m[1m>[0m [90m596 |
+[0m ....id, reflectingCust
+omMission.id, todayStr, re
+flectingCustomMission.poin
+ts, finalProofU...
+  [90m    |[0m          
+                          
+           [31m[1m^[0m
+  [90m597 |[0m ...
+  [90m598 |[0m ...
+  [90m599 |[0m ...
+Next.js build worker exite
+d with code: 1 and signal:
+ null

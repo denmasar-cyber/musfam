@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/mdenm/AppData/Local/Temp/**)",
+      "Bash(ls -la \"c:/Users/mdenm/AppData/Local/Temp/9c618d69-960f-4242-b443-0b44a1e24340.png\" \"c:/Users/mdenm/AppData/Local/Temp/9c618d69-960f-4242-b443-0b44a1e24340 \\(2\\).png\")",
+      "Read(//c/Users/mdenm/Downloads/**)",
+      "Bash(cp \"c:/Users/mdenm/Downloads/Batik-Kawung-1-removebg-preview.png\" \"c:/Users/mdenm/Downloads/Musfam/musfam-app/public/batik-kawung.png\")",
+      "Bash(cp \"c:/Users/mdenm/Downloads/Black and White Bold Typographic Web Design Logo \\(2\\).png\" \"c:/Users/mdenm/Downloads/Musfam/musfam-app/public/musfam-logo.png\")",
+      "Bash(identify \"c:/Users/mdenm/Downloads/Musfam/musfam-app/public/batik-kawung.png\")",
+      "Bash(head -10 grep -n \"from-\\\\[#2d3a10\\\\]\\\\|from-\\\\[#3d4e18\\\\]\\\\|from-\\\\[#5a6b28\\\\]\" \"c:/Users/mdenm/Downloads/Musfam/musfam-app/src/app/learn/page.tsx\")",
+      "Read(//mnt/c/Users/mdenm/Downloads/Musfam/musfam-app/**)",
+      "Bash(cmd.exe /c \"dir C:\\\\Users\\\\mdenm\\\\Downloads\\\\Musfam\\\\musfam-app\\\\public\")",
+      "Bash(cmd.exe /c dir \"C:\\\\Users\\\\mdenm\\\\Downloads\\\\Musfam\\\\musfam-app\\\\public\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\mdenm\\Downloads"
+    ]
+  }
+}
